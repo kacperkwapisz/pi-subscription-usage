@@ -13,8 +13,8 @@ export default function (pi: ExtensionAPI) {
   let subscriptionsOverlayHandle: OverlayHandle | null = null;
   let closeSubscriptionsOverlay: (() => void) | null = null;
 
-  pi.registerCommand("subscriptions", {
-    description: "Show subscription providers in a floating dialog",
+  const command: Parameters<ExtensionAPI["registerCommand"]>[1] = {
+    description: "Show subscription usage for every account",
     handler: async (args, ctx) => {
       if (ctx.mode !== "tui") {
         ctx.ui.notify("/subscriptions requires TUI mode", "error");
@@ -227,5 +227,8 @@ export default function (pi: ExtensionAPI) {
         });
 
     },
-  });
+  };
+
+  pi.registerCommand("subscriptions", command);
+  pi.registerCommand("usage", command);
 }

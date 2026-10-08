@@ -645,7 +645,7 @@ export class SubscriptionsDialog {
       addBlankLine();
     }
 
-    addWrappedBlock(this.theme.fg("dim", "/subscriptions close • s settings"));
+    addWrappedBlock(this.theme.fg("dim", "/usage close • s settings"));
     const canSwitch = this.onUseAccount !== undefined
       && this.providers[this.activeIndex] !== undefined
       && this.accountsOf(this.providers[this.activeIndex]!).length > 1;

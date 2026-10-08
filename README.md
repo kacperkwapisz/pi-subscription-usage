@@ -15,10 +15,10 @@ Requires Pi 1.x.
 ## Use
 
 ```text
-/subscriptions
+/usage
 ```
 
-Opens a tabbed view with one tab per provider. Each tab shows every logged-in account with
+(or `/subscriptions`) opens a tabbed view with one tab per provider. Each tab shows every logged-in account with
 its usage windows (e.g. 5-hour and weekly), reset times, and — where the provider reports
 them — email and plan.
 
