@@ -22,8 +22,13 @@ Requires Pi 1.x.
 its usage windows (e.g. 5-hour and weekly), reset times, and — where the provider reports
 them — email and plan.
 
+Only providers you actually have show up: a tab appears once you log in (or add an API key
+for OpenRouter/OpenCode), and a provider that reports no subscription behind your login is
+dropped for the session. Settings (`s`) list every provider and mark the ones that are not
+set up or have no subscription.
+
 - `Tab` / `←` `→` switch providers, `r` refreshes, `Esc` closes.
-- `s` opens settings: which providers to show, **used vs. remaining**, relative or absolute
+- `s` opens settings: which providers may show, **used vs. remaining**, relative or absolute
   reset times, and bar markers.
 
 Settings are saved to `~/.pi/agent/subscription-usage.json`.

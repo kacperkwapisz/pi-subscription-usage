@@ -12,6 +12,10 @@ interface ProviderSettingsDialogOptions {
   theme: Theme;
   providers: SubscriptionProviderDefinition[];
   enabledProviderIds: SubscriptionProviderId[];
+  /** Providers the user has a login or key for; others are marked "not set up". */
+  setUpProviderIds?: SubscriptionProviderId[];
+  /** Set up, but the provider reported no subscription; its tab is hidden this session. */
+  noSubscriptionProviderIds?: SubscriptionProviderId[];
   displayMode: SubscriptionUsageDisplayMode;
   resetTimeDisplayMode: SubscriptionResetTimeDisplayMode;
   showThresholdNotches: boolean;
@@ -79,12 +83,21 @@ export class ProviderSettingsDialog {
         currentValue: this.showNowNotch ? "shown" : "hidden",
         values: ["shown", "hidden"],
       },
-      ...this.providers.map((provider) => ({
-        id: provider.id,
-        label: provider.label,
-        currentValue: this.enabledProviderIds.has(provider.id) ? "enabled" : "disabled",
-        values: ["enabled", "disabled"],
-      })),
+      ...this.providers.map((provider) => {
+        const setUp = options.setUpProviderIds?.includes(provider.id) ?? true;
+        const noSubscription = options.noSubscriptionProviderIds?.includes(provider.id) ?? false;
+        return {
+          id: provider.id,
+          label: !setUp ? `${provider.label} (not set up)` : noSubscription ? `${provider.label} (no subscription)` : provider.label,
+          description: !setUp
+            ? `Not set up, so its tab is hidden. ${provider.authHint}`
+            : noSubscription
+              ? "Your login has no subscription with usage to show, so its tab is hidden."
+              : undefined,
+          currentValue: this.enabledProviderIds.has(provider.id) ? "enabled" : "disabled",
+          values: ["enabled", "disabled"],
+        };
+      }),
     ];
 
     this.container = new Container();

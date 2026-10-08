@@ -38,25 +38,33 @@ const ready = (email: string, identity: string, used: number): SubscriptionProvi
   ],
 });
 
+/** Lets every scripted load settle (they resolve immediately). */
+async function settle() {
+  for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
+}
+
 async function openDialog(options: {
   displayMode: "used" | "remaining";
   accounts: SubscriptionAccount[];
   onUseAccount?: (account: SubscriptionAccount) => void;
+  providers?: SubscriptionProviderDefinition[];
+  states?: Record<string, SubscriptionProviderRuntimeState>;
+  onNoSubscription?: (provider: SubscriptionProviderDefinition) => void;
 }) {
   const states: Record<string, SubscriptionProviderRuntimeState> = {
     anthropic: ready("kacper@example.com", "anthropic:a", 27),
     "anthropic-account-2": ready("kacper@example.com", "anthropic:a", 27),
     "anthropic-account-3": ready("nadia@example.com", "anthropic:b", 2),
+    xai: { state: "ready", usageWindows: [] },
+    ...options.states,
   };
-  let pending = options.accounts.length;
-  let settled!: () => void;
-  const done = new Promise<void>((resolve) => (settled = resolve));
   const dialog = new SubscriptionsDialog({
-    providers: [provider("anthropic", "Anthropic"), provider("xai", "xAI")],
-    loadAccounts: (p) => (p.id === "anthropic" ? options.accounts : [account("xai", 1)]),
+    providers: options.providers ?? [provider("anthropic", "Anthropic"), provider("xai", "xAI")],
+    loadAccounts: (p) => (p.id === "anthropic" ? options.accounts : [{ ...account(p.id, 1), sourceId: p.id }]),
     loadAccountState: async (_p, a) => states[a.providerId]!,
     currentProviderId: "anthropic",
     onUseAccount: options.onUseAccount,
+    onNoSubscription: options.onNoSubscription,
     displayMode: options.displayMode,
     resetTimeDisplayMode: "relative",
     showThresholdNotches: false,
@@ -64,12 +72,9 @@ async function openDialog(options: {
     theme: plainTheme,
     onClose: () => {},
     onOpenSettings: () => {},
-    requestRender: () => {
-      if (--pending === 0) settled();
-    },
+    requestRender: () => {},
   });
-  await done;
-  await new Promise((resolve) => setImmediate(resolve));
+  await settle();
   dialog.dispose();
   return dialog;
 }
@@ -134,5 +139,31 @@ test("without pi-multi-account the view stays read-only", async () => {
   const text = dialog.render(100).join("\n");
   assert.doesNotMatch(text, /Enter use account/);
   assert.doesNotMatch(text, /^.{3}>/m, "no selection pointer");
+});
+
+test("a provider whose only login has no subscription loses its tab, and the session remembers it", async () => {
+  const dropped: string[] = [];
+  const dialog = await openDialog({
+    displayMode: "remaining",
+    accounts: [account("anthropic", 1)],
+    states: { xai: { state: "error", noSubscription: true, errorMessage: "no subscription" } },
+    onNoSubscription: (p) => dropped.push(p.id),
+  });
+  const text = dialog.render(100).join("\n");
+  assert.deepEqual(dropped, ["xai"]);
+  assert.doesNotMatch(text, / xAI /, "tab gone");
+  assert.match(text, / Anthropic /);
+});
+
+test("a tab stays when at least one of its accounts has a subscription", async () => {
+  const dropped: string[] = [];
+  const dialog = await openDialog({
+    displayMode: "remaining",
+    accounts: [account("anthropic", 1), account("anthropic-account-3", 3)],
+    states: { anthropic: { state: "error", noSubscription: true } },
+    onNoSubscription: (p) => dropped.push(p.id),
+  });
+  assert.deepEqual(dropped, []);
+  assert.match(dialog.render(100).join("\n"), / Anthropic \(2\) /);
 });
 

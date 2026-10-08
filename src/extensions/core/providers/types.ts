@@ -36,6 +36,8 @@ export interface SubscriptionAccountInfo {
 export interface SubscriptionProviderRuntimeState {
   state: SubscriptionProviderRuntimeLoadState;
   account?: SubscriptionAccountInfo;
+  /** The login works, but there is no subscription behind it to show; the tab is dropped. */
+  noSubscription?: boolean;
   implementationStatus?: SubscriptionProviderImplementationStatus;
   statusLine?: string;
   description?: string;
@@ -65,6 +67,12 @@ export interface SubscriptionProviderDefinition {
    * Defaults to `[id]`.
    */
   accountSources?: readonly string[];
+  /**
+   * Whether the user has what this provider needs, from Pi's stored logins (and anything else
+   * the provider reads). Tabs only appear for providers that are set up. Defaults to a
+   * subscription (OAuth) login for the provider or one of its accounts.
+   */
+  isSetUp?: (stored: Record<string, unknown>) => boolean;
   /** Loads one account. Without `auth`, the provider's own Pi login is used. */
   loadRuntimeState?: (auth?: SubscriptionAuthStorage) => Promise<SubscriptionProviderRuntimeState>;
 }

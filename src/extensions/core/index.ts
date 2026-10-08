@@ -3,13 +3,20 @@ import type { OverlayHandle } from "@earendil-works/pi-tui";
 import { discoverAccounts, type SubscriptionAccount } from "./accounts.ts";
 import { createSubscriptionAuthStorage, readStoredCredentials, scopeAuthStorage } from "./auth.ts";
 import { connectMultiAccount } from "./multi-account.ts";
-import { createDefaultSubscriptionProviderRegistry, type SubscriptionProviderId } from "./providers/index.ts";
+import { isProviderSetUp } from "./setup.ts";
+import {
+  createDefaultSubscriptionProviderRegistry,
+  type SubscriptionProviderDefinition,
+  type SubscriptionProviderId,
+} from "./providers/index.ts";
 import { loadSubscriptionMeterSettings, saveSubscriptionMeterSettings } from "./settings.ts";
 import { ProviderSettingsDialog } from "./ui/provider-settings-dialog.ts";
 import { SubscriptionsDialog } from "./ui/subscriptions-dialog.ts";
 
 export default function (pi: ExtensionAPI) {
   const providerRegistry = createDefaultSubscriptionProviderRegistry();
+  // Providers whose logins turned out to have no subscription; hidden for the rest of the session.
+  const withoutSubscription = new Set<SubscriptionProviderId>();
   let subscriptionsOverlayHandle: OverlayHandle | null = null;
   let closeSubscriptionsOverlay: (() => void) | null = null;
 
@@ -44,6 +51,10 @@ export default function (pi: ExtensionAPI) {
       providerRegistry.setEnabledProviders(currentSettings.enabledProviders);
 
       let dialog: SubscriptionsDialog | undefined;
+      // Tabs appear for providers that are enabled in settings and set up (logged in or keyed).
+      const isSetUp = (provider: SubscriptionProviderDefinition) => isProviderSetUp(provider, readStoredCredentials());
+      const visibleProviders = () =>
+        providerRegistry.getEnabledProviders().filter((provider) => isSetUp(provider) && !withoutSubscription.has(provider.id));
       // With pi-multi-account loaded, Enter on an account switches to it (after the overlay closes).
       const multiAccount = connectMultiAccount(pi.events);
       let accountToUse: SubscriptionAccount | undefined;
@@ -69,7 +80,7 @@ export default function (pi: ExtensionAPI) {
 
             currentSettings = savedSettings;
             providerRegistry.setEnabledProviders(savedSettings.enabledProviders);
-            dialog?.setProviders(providerRegistry.getEnabledProviders());
+            dialog?.setProviders(visibleProviders());
             dialog?.setDisplayMode(savedSettings.displayMode);
             dialog?.setResetTimeDisplayMode(savedSettings.resetTimeDisplayMode);
             dialog?.setShowThresholdNotches(savedSettings.showThresholdNotches);
@@ -95,6 +106,8 @@ export default function (pi: ExtensionAPI) {
                   theme: overlayTheme,
                   providers: providerRegistry.getAllProviders(),
                   enabledProviderIds: providerRegistry.getEnabledProviders().map((provider) => provider.id),
+                  setUpProviderIds: providerRegistry.getAllProviders().filter(isSetUp).map((provider) => provider.id),
+                  noSubscriptionProviderIds: [...withoutSubscription],
                   displayMode: currentSettings.displayMode,
                   resetTimeDisplayMode: currentSettings.resetTimeDisplayMode,
                   showThresholdNotches: currentSettings.showThresholdNotches,
@@ -163,7 +176,7 @@ export default function (pi: ExtensionAPI) {
         const auth = createSubscriptionAuthStorage(ctx.modelRegistry);
 
         dialog = new SubscriptionsDialog({
-          providers: providerRegistry.getEnabledProviders(),
+          providers: visibleProviders(),
           loadAccounts: (provider) => discoverAccounts(provider, readStoredCredentials()),
           loadAccountState: async (provider, account) => {
             if (!provider.loadRuntimeState) {
@@ -178,6 +191,7 @@ export default function (pi: ExtensionAPI) {
                 done(undefined);
               }
             : undefined,
+          onNoSubscription: (provider) => withoutSubscription.add(provider.id),
           displayMode: currentSettings.displayMode,
           resetTimeDisplayMode: currentSettings.resetTimeDisplayMode,
           showThresholdNotches: currentSettings.showThresholdNotches,

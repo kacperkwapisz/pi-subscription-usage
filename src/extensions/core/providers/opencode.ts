@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { hasStoredLogin } from "../setup.ts";
 import { createSubscriptionAuthStorage, type SubscriptionAuthStorage, type SubscriptionAuthStatus } from "../auth.ts";
 import type {
   SubscriptionProviderDefinition,
@@ -239,6 +240,15 @@ async function attachPiOpenCodeKey(
   authStatus: SubscriptionAuthStatus,
   auth: SubscriptionAuthStorage,
 ): Promise<void> {
+  // Pi's own OpenCode Go login holds exactly the key Go usage needs.
+  if (!resolved.goApiKey) {
+    const goKey = (await auth.getApiKey("opencode-go", { includeFallback: false }))?.trim();
+    if (goKey) {
+      resolved.goApiKey = goKey;
+      resolved.goKeySource = "Pi /login opencode-go";
+    }
+  }
+
   const piKey = (await auth.getApiKey("opencode", { includeFallback: true }))?.trim();
   if (!piKey) {
     return;
@@ -592,6 +602,8 @@ export async function loadOpenCodeRuntimeState(
   if (usageWindows.length === 0) {
     return {
       state: "error",
+      // A key without a Go subscription and no Zen cookie: nothing this tab could ever show.
+      noSubscription: !resolved.authCookie && /subscription required|entitlement/i.test(goError ?? ""),
       implementationStatus: "implemented",
       statusLine: "unavailable",
       errorMessage: joinStatus([goError, zenError]),
@@ -652,5 +664,13 @@ export const opencodeProvider: SubscriptionProviderDefinition = {
     { label: "Weekly", statusLabel: "loading…", notches: [50, 75] },
     { label: "Monthly", statusLabel: "loading…", notches: [50, 75, 90] },
   ],
+  // A Pi login, OpenCode's own login or its environment variables.
+  isSetUp: (stored) => {
+    if (hasStoredLogin(stored, "opencode", "opencode-go")) {
+      return true;
+    }
+    const resolved = resolveOpenCodeAuth();
+    return Boolean(resolved.goApiKey || resolved.authCookie);
+  },
   loadRuntimeState: loadOpenCodeRuntimeState,
 };

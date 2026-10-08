@@ -17,7 +17,8 @@ function credentialType(credential: unknown): string | undefined {
   return typeof type === "string" ? type : undefined;
 }
 
-function accountNumber(providerId: string, source: string): number | undefined {
+/** 1 for `source` itself, N for `<source>-account-N`, otherwise undefined. */
+export function accountNumber(providerId: string, source: string): number | undefined {
   if (providerId === source) {
     return 1;
   }

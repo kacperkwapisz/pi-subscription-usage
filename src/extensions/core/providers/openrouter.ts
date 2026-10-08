@@ -1,3 +1,4 @@
+import { hasEnv, hasStoredLogin } from "../setup.ts";
 import { createSubscriptionAuthStorage, type SubscriptionAuthStorage, type SubscriptionAuthStatus } from "../auth.ts";
 import type {
   SubscriptionProviderDefinition,
@@ -353,5 +354,7 @@ export const openRouterProvider: SubscriptionProviderDefinition = {
     { label: "Weekly", statusLabel: "loading…", notches: [50, 75] },
     { label: "Monthly", statusLabel: "loading…", notches: [50, 75, 90] },
   ],
+  // An API key is all OpenRouter needs.
+  isSetUp: (stored) => hasStoredLogin(stored, "openrouter") || hasEnv("OPENROUTER_API_KEY"),
   loadRuntimeState: loadOpenRouterRuntimeState,
 };

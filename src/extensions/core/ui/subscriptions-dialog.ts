@@ -22,6 +22,8 @@ interface SubscriptionsDialogOptions {
   currentProviderId?: string;
   /** Present when accounts can be switched (pi-multi-account is loaded). */
   onUseAccount?: (account: SubscriptionAccount) => void;
+  /** Called when a provider's tab is dropped because none of its logins has a subscription. */
+  onNoSubscription?: (provider: SubscriptionProviderDefinition) => void;
   displayMode: SubscriptionUsageDisplayMode;
   resetTimeDisplayMode: SubscriptionResetTimeDisplayMode;
   showThresholdNotches: boolean;
@@ -122,6 +124,7 @@ export class SubscriptionsDialog {
   private readonly loadAccountState: SubscriptionsDialogOptions["loadAccountState"];
   private readonly currentProviderId?: string;
   private readonly onUseAccount?: (account: SubscriptionAccount) => void;
+  private readonly onNoSubscription?: (provider: SubscriptionProviderDefinition) => void;
   private readonly selectedAccount = new Map<SubscriptionProviderId, number>();
   private displayMode: SubscriptionUsageDisplayMode;
   private resetTimeDisplayMode: SubscriptionResetTimeDisplayMode;
@@ -145,6 +148,7 @@ export class SubscriptionsDialog {
     this.loadAccountState = options.loadAccountState;
     this.currentProviderId = options.currentProviderId;
     this.onUseAccount = options.onUseAccount;
+    this.onNoSubscription = options.onNoSubscription;
     this.displayMode = options.displayMode;
     this.resetTimeDisplayMode = options.resetTimeDisplayMode;
     this.showThresholdNotches = options.showThresholdNotches;
@@ -154,7 +158,15 @@ export class SubscriptionsDialog {
     );
     this.activeIndex = Math.max(0, current);
     this.syncLiveUpdateTicker();
+    this.loadAllProviders();
+  }
+
+  /** Every tab loads in the background, so tabs without a subscription disappear right away. */
+  private loadAllProviders(): void {
     this.ensureActiveProviderLoaded();
+    for (const provider of [...this.providers]) {
+      this.ensureProviderLoaded(provider);
+    }
   }
 
   setProviders(providers: SubscriptionProviderDefinition[]): void {
@@ -166,7 +178,7 @@ export class SubscriptionsDialog {
     }
     this.syncLiveUpdateTicker();
     this.invalidate();
-    this.ensureActiveProviderLoaded();
+    this.loadAllProviders();
   }
 
   setDisplayMode(displayMode: SubscriptionUsageDisplayMode): void {
@@ -312,7 +324,13 @@ export class SubscriptionsDialog {
 
   private ensureActiveProviderLoaded(force = false): void {
     const provider = this.providers[this.activeIndex];
-    if (!provider?.loadRuntimeState) {
+    if (provider) {
+      this.ensureProviderLoaded(provider, force);
+    }
+  }
+
+  private ensureProviderLoaded(provider: SubscriptionProviderDefinition, force = false): void {
+    if (!provider.loadRuntimeState) {
       return;
     }
 
@@ -350,6 +368,7 @@ export class SubscriptionsDialog {
         })
         .finally(() => {
           this.loading.delete(key);
+          this.dropIfNoSubscription(provider);
           this.invalidate();
           this.requestRender();
         });
@@ -357,6 +376,23 @@ export class SubscriptionsDialog {
 
     this.invalidate();
     this.requestRender();
+  }
+
+  /** Drops a tab once every one of its accounts has loaded and none has a subscription. */
+  private dropIfNoSubscription(provider: SubscriptionProviderDefinition): void {
+    const states = this.accountsOf(provider).map((account) => this.stateOf(provider, account));
+    if (states.length === 0 || !states.every((state) => state?.noSubscription)) {
+      return;
+    }
+    const index = this.providers.indexOf(provider);
+    if (index < 0) {
+      return;
+    }
+    const active = this.providers[this.activeIndex];
+    this.providers = this.providers.filter((candidate) => candidate !== provider);
+    this.activeIndex = Math.max(0, active && active !== provider ? this.providers.indexOf(active) : Math.min(index, this.providers.length - 1));
+    this.onNoSubscription?.(provider);
+    this.ensureActiveProviderLoaded();
   }
 
   private refreshActiveProvider(): void {
@@ -499,7 +535,7 @@ export class SubscriptionsDialog {
             "muted",
             ` ${this.providers.length} provider tab(s) • ${this.displayMode} • reset ${this.resetTimeDisplayMode}`,
           )
-        : this.theme.fg("warning", " No providers enabled");
+        : this.theme.fg("warning", " No subscriptions set up");
     addContentLine(subtitle);
     addBlankLine();
 
@@ -635,7 +671,7 @@ export class SubscriptionsDialog {
       addWrappedBlock(
         this.theme.fg(
           "warning",
-          "No providers are currently enabled. Press s to open provider settings and enable one or more subscription tabs.",
+          "No subscriptions found. Log in with /login (Claude, ChatGPT, Copilot, xAI, Kimi) or add an OpenRouter or OpenCode key; tabs appear on their own. Press s to see every provider.",
         ),
       );
       addBlankLine();
