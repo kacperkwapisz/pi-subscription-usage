@@ -193,7 +193,7 @@ async function fetchKimiUsages(accessToken: string): Promise<KimiUsagesResponse>
     headers: {
       Authorization: `Bearer ${accessToken}`,
       Accept: "application/json",
-      "User-Agent": "pi-subscription-meter/kimi-coding",
+      "User-Agent": "pi-subscription-usage/kimi-coding",
     },
     redirect: "error",
     signal: AbortSignal.timeout(KIMI_CODING_USAGE_TIMEOUT_MS),

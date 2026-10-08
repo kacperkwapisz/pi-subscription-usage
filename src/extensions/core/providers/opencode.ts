@@ -328,7 +328,7 @@ async function loadGoUsage(apiKey: string): Promise<GoUsageResult> {
   const { status, body } = await fetchText(OPENCODE_GO_USAGE_URL, {
     Authorization: `Bearer ${apiKey}`,
     Accept: "application/json",
-    "User-Agent": "pi-subscription-meter",
+    "User-Agent": "pi-subscription-usage",
   });
 
   if (status === 401 || status === 403) {
@@ -465,7 +465,7 @@ async function discoverWorkspaceId(cookie: string): Promise<string | undefined> 
   const { body, finalUrl } = await fetchText(OPENCODE_CONSOLE_URL, {
     Cookie: cookieHeader(cookie),
     Accept: "text/html,application/xhtml+xml",
-    "User-Agent": "pi-subscription-meter",
+    "User-Agent": "pi-subscription-usage",
   });
   return extractWorkspaceId(finalUrl) ?? extractWorkspaceId(body);
 }
@@ -475,7 +475,7 @@ async function loadZenUsage(cookie: string, workspaceId: string): Promise<ZenUsa
   const { status, body } = await fetchText(url, {
     Cookie: cookieHeader(cookie),
     Accept: "text/html,application/xhtml+xml",
-    "User-Agent": "pi-subscription-meter",
+    "User-Agent": "pi-subscription-usage",
   });
 
   if (status === 401 || status === 403) {

@@ -26,7 +26,7 @@ them — email and plan.
 - `s` opens settings: which providers to show, **used vs. remaining**, relative or absolute
   reset times, and bar markers.
 
-Settings are saved to `~/.pi/agent/subscription-meter.json`.
+Settings are saved to `~/.pi/agent/subscription-usage.json`.
 
 ## Multiple accounts
 

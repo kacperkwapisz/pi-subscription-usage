@@ -15,7 +15,9 @@ export interface SubscriptionMeterSettings {
   showNowNotch: boolean;
 }
 
-const SETTINGS_FILE_NAME = "subscription-meter.json";
+const SETTINGS_FILE_NAME = "subscription-usage.json";
+/** Read once when the new file does not exist yet, so existing settings carry over. */
+const LEGACY_SETTINGS_FILE_NAME = "subscription-meter.json";
 const SETTINGS_VERSION = 1;
 const DEFAULT_DISPLAY_MODE: SubscriptionUsageDisplayMode = "used";
 const DEFAULT_RESET_TIME_DISPLAY_MODE: SubscriptionResetTimeDisplayMode = "relative";
@@ -60,7 +62,9 @@ export function getSubscriptionMeterSettingsPath(): string {
 }
 
 export function loadSubscriptionMeterSettings(): SubscriptionMeterSettings {
-  const settingsPath = getSubscriptionMeterSettingsPath();
+  const currentPath = getSubscriptionMeterSettingsPath();
+  const legacyPath = join(getPiAgentDir(), LEGACY_SETTINGS_FILE_NAME);
+  const settingsPath = existsSync(currentPath) ? currentPath : legacyPath;
   const defaults = getDefaultSettings();
 
   if (!existsSync(settingsPath)) {
