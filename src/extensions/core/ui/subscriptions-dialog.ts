@@ -34,28 +34,15 @@ interface SubscriptionsDialogOptions {
   requestRender: () => void;
 }
 
-function pad2(value: number): string {
-  return String(Math.max(0, value)).padStart(2, "0");
-}
-
-function formatRelativeResetTime(resetAt: Date): string {
-  const totalSeconds = Math.max(0, Math.ceil((resetAt.getTime() - Date.now()) / 1000));
-
-  if (totalSeconds >= 24 * 60 * 60) {
-    const days = Math.floor(totalSeconds / (24 * 60 * 60));
-    const hours = Math.floor((totalSeconds % (24 * 60 * 60)) / (60 * 60));
-    return `${days}d ${pad2(hours)}h`;
-  }
-
-  if (totalSeconds >= 60 * 60) {
-    const hours = Math.floor(totalSeconds / (60 * 60));
-    const minutes = Math.floor((totalSeconds % (60 * 60)) / 60);
-    return `${pad2(hours)}h ${pad2(minutes)}m`;
-  }
-
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${pad2(minutes)}m ${pad2(seconds)}s`;
+/** "41m", "2h 14m", "1d 6h", "<1m". */
+export function formatRelativeResetTime(resetAt: Date): string {
+  const minutes = Math.ceil(Math.max(0, resetAt.getTime() - Date.now()) / 60_000);
+  if (minutes < 1) return "<1m";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return minutes % 60 ? `${hours}h ${minutes % 60}m` : `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return hours % 24 ? `${days}d ${hours % 24}h` : `${days}d`;
 }
 
 function formatAbsoluteResetTime(resetAt: Date): string {
@@ -111,8 +98,6 @@ function getNowMarkerColor(
   return "accent";
 }
 
-const STABLE_DIALOG_MIN_TOTAL_LINES = 32;
-const FOOTER_LINE_COUNT = 3;
 
 export class SubscriptionsDialog {
   private providers: SubscriptionProviderDefinition[];
@@ -133,6 +118,7 @@ export class SubscriptionsDialog {
   private activeIndex = 0;
   private cachedWidth?: number;
   private cachedLines?: string[];
+  private tallestBody = 0;
   private readonly accounts = new Map<SubscriptionProviderId, SubscriptionAccount[]>();
   private readonly runtimeStates = new Map<string, SubscriptionProviderRuntimeState>();
   private readonly loading = new Set<string>();
@@ -341,14 +327,7 @@ export class SubscriptionsDialog {
       }
 
       this.loading.add(key);
-      this.runtimeStates.set(key, {
-        state: "loading",
-        implementationStatus: provider.implementationStatus,
-        statusLine: "loading live data",
-        description: provider.description,
-        notes: provider.notes,
-        usageWindows: provider.usageWindows,
-      });
+      this.runtimeStates.set(key, { state: "loading" });
 
       void this.loadAccountState(provider, account)
         .then((state) => {
@@ -356,15 +335,7 @@ export class SubscriptionsDialog {
         })
         .catch((error: unknown) => {
           const message = error instanceof Error ? error.message : String(error);
-          this.runtimeStates.set(key, {
-            state: "error",
-            implementationStatus: provider.implementationStatus,
-            statusLine: "fetch failed",
-            description: provider.description,
-            notes: provider.notes,
-            usageWindows: provider.usageWindows,
-            errorMessage: message,
-          });
+          this.runtimeStates.set(key, { state: "error", errorMessage: message });
         })
         .finally(() => {
           this.loading.delete(key);
@@ -462,16 +433,6 @@ export class SubscriptionsDialog {
     };
 
 
-    const getUsageWindows = (
-      provider: SubscriptionProviderDefinition,
-      runtimeState?: SubscriptionProviderRuntimeState,
-    ): SubscriptionUsageWindowDefinition[] => {
-      if (runtimeState?.usageWindows && runtimeState.usageWindows.length > 0) {
-        return runtimeState.usageWindows;
-      }
-      return provider.usageWindows;
-    };
-
     /** The pieces of one usage window, shared by the full and the compact layout. */
     const describeWindow = (usageWindow: SubscriptionUsageWindowDefinition, barWidth: number) => {
       const displayPercent = usageWindow.usedPercent == null
@@ -510,16 +471,7 @@ export class SubscriptionsDialog {
     };
 
     addBorder("┌", "─", "┐");
-    addContentLine(this.theme.fg("accent", this.theme.bold(" Subscriptions")));
-
-    const subtitle =
-      this.providers.length > 0
-        ? this.theme.fg(
-            "muted",
-            ` ${this.providers.length} provider tab(s) • ${this.displayMode} • reset ${this.resetTimeDisplayMode}`,
-          )
-        : this.theme.fg("warning", " No subscriptions set up");
-    addContentLine(subtitle);
+    addContentLine(this.theme.fg("accent", this.theme.bold(" Usage")));
     addBlankLine();
 
     if (this.providers.length > 0) {
@@ -542,9 +494,8 @@ export class SubscriptionsDialog {
         // One account: the full single-provider layout.
         const account = accounts[0];
         const runtimeState = account ? this.stateOf(activeProvider, account) : undefined;
-        const usageWindows = getUsageWindows(activeProvider, runtimeState);
+        const usageWindows = runtimeState?.usageWindows ?? [];
 
-        addWrappedBlock(this.theme.fg("accent", this.theme.bold(activeProvider.label)));
         const who = [runtimeState?.account?.email, runtimeState?.account?.plan].filter(Boolean).join(" · ");
         if (who) {
           addWrappedBlock(this.theme.fg("muted", who));
@@ -559,7 +510,7 @@ export class SubscriptionsDialog {
         addBlankLine();
 
         if (runtimeState?.state === "loading") {
-          addWrappedBlock(this.theme.fg("warning", "Fetching latest provider data…"));
+          addWrappedBlock(this.theme.fg("muted", "Loading…"));
           addBlankLine();
         }
 
@@ -593,13 +544,11 @@ export class SubscriptionsDialog {
             addBlankLine();
           }
         } else {
-          addWrappedBlock(this.theme.fg("warning", "No usage windows configured for this provider yet."));
+          addWrappedBlock(this.theme.fg("muted", "No usage reported."));
           addBlankLine();
         }
       } else {
         // Several accounts: one compact section each, one line per usage window.
-        addWrappedBlock(this.theme.fg("accent", this.theme.bold(activeProvider.label)));
-        addBlankLine();
 
         const firstWithIdentity = new Map<string, string>();
         const selected = this.onUseAccount ? this.selectedIndex(activeProvider, accounts) : -1;
@@ -616,7 +565,7 @@ export class SubscriptionsDialog {
           const inUse = account.providerId === this.currentProviderId;
           const name = [account.label, runtimeState?.account?.email, runtimeState?.account?.plan].filter(Boolean).join(" · ");
           const badge = sameAs
-            ? this.theme.fg("warning", `same account as ${sameAs}`)
+            ? this.theme.fg("warning", `same as ${sameAs.toLowerCase()}`)
             : inUse
               ? this.theme.fg("accent", "in use")
               : "";
@@ -627,7 +576,7 @@ export class SubscriptionsDialog {
           );
 
           if (runtimeState?.state === "loading") {
-            addContentLine(`    ${this.theme.fg("warning", "Fetching…")}`);
+            addContentLine(`    ${this.theme.fg("muted", "Loading…")}`);
           } else if (runtimeState?.state === "error") {
             addWrappedBlock(this.theme.fg("error", runtimeState.errorMessage ?? "fetch failed"), "    ");
           } else {
@@ -639,7 +588,7 @@ export class SubscriptionsDialog {
             for (const usageWindow of usageWindows) {
               const { statusText, bar } = describeWindow(usageWindow, barWidth);
               const reset = usageWindow.resetAt instanceof Date
-                ? this.theme.fg("dim", ` · ${formatResetDetail(usageWindow.resetAt, this.resetTimeDisplayMode)}`)
+                ? this.theme.fg("dim", ` · ${formatResetDetail(usageWindow.resetAt, this.resetTimeDisplayMode).toLowerCase()}`)
                 : "";
               const label = this.theme.fg("text", usageWindow.label.padEnd(labelWidth));
               addContentLine(`    ${label}  ${bar ?? ""}  ${statusText}${reset}`);
@@ -652,23 +601,26 @@ export class SubscriptionsDialog {
       addWrappedBlock(
         this.theme.fg(
           "warning",
-          "No subscriptions found. Log in with /login (Claude, ChatGPT, Copilot, xAI, Kimi) or add an OpenRouter or OpenCode key; tabs appear on their own. Press s to see every provider.",
+          "Nothing to show yet. Log in with /login, or add an OpenRouter or OpenCode key, and its tab appears here.",
         ),
       );
       addBlankLine();
     }
 
-    while (lines.length < STABLE_DIALOG_MIN_TOTAL_LINES - FOOTER_LINE_COUNT) {
+    // Keep the height steady between tabs: grow to the tallest tab seen, never pad beyond it.
+    this.tallestBody = Math.max(this.tallestBody, lines.length);
+    while (lines.length < this.tallestBody) {
       addBlankLine();
     }
 
-    addWrappedBlock(this.theme.fg("dim", "/usage close • s settings"));
     const canSwitch = this.onUseAccount !== undefined
       && this.providers[this.activeIndex] !== undefined
       && this.accountsOf(this.providers[this.activeIndex]!).length > 1;
     addContentLine(this.theme.fg(
       "dim",
-      canSwitch ? "Tab/←→ switch • ↑↓ select • Enter use account • r refresh • Esc close" : "Tab/←→ switch • r refresh • Esc close",
+      canSwitch
+        ? " Tab/←→ provider • ↑↓ account • Enter use • r refresh • s settings • Esc close"
+        : " Tab/←→ provider • r refresh • s settings • Esc close",
     ));
     addBorder("└", "─", "┘");
 

@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { hasStoredLogin } from "../setup.ts";
-import { createSubscriptionAuthStorage, type SubscriptionAuthStorage, type SubscriptionAuthStatus } from "../auth.ts";
+import { createSubscriptionAuthStorage, type SubscriptionAuthStorage } from "../auth.ts";
 import type {
   SubscriptionProviderDefinition,
   SubscriptionProviderRuntimeState,
@@ -39,13 +39,9 @@ const ZEN_WORKSPACE_ENV = ["OPENCODE_WORKSPACE_ID", "OPENCODE_ZEN_WORKSPACE_ID"]
 
 interface OpenCodeResolvedAuth {
   goApiKey?: string;
-  goKeySource?: string;
   zenApiKey?: string;
-  zenKeySource?: string;
   authCookie?: string;
-  cookieSource?: string;
   workspaceId?: string;
-  workspaceSource?: string;
 }
 
 interface GoUsageWindowPayload {
@@ -184,19 +180,6 @@ function readOpenCodeAuthFile(): Record<string, unknown> | undefined {
   return undefined;
 }
 
-function authSourceLabel(authStatus: SubscriptionAuthStatus): string | undefined {
-  if (authStatus.source === "stored") {
-    return "Pi /login opencode";
-  }
-  if (authStatus.source === "environment") {
-    return authStatus.label ?? "environment";
-  }
-  if (authStatus.source === "fallback") {
-    return authStatus.label ?? "fallback auth";
-  }
-  return undefined;
-}
-
 function resolveOpenCodeAuth(): OpenCodeResolvedAuth {
   const resolved: OpenCodeResolvedAuth = {};
   const localAuth = readOpenCodeAuthFile();
@@ -206,30 +189,24 @@ function resolveOpenCodeAuth(): OpenCodeResolvedAuth {
   const goEnv = firstEnv(GO_API_KEY_ENV);
   if (goEnv) {
     resolved.goApiKey = goEnv.value;
-    resolved.goKeySource = `env:${goEnv.name}`;
   } else if (localGoKey) {
     resolved.goApiKey = localGoKey;
-    resolved.goKeySource = "~/.local/share/opencode/auth.json#opencode-go";
   } else if (localZenKey) {
     resolved.goApiKey = localZenKey;
-    resolved.goKeySource = "~/.local/share/opencode/auth.json#opencode";
   }
 
   if (localZenKey) {
     resolved.zenApiKey = localZenKey;
-    resolved.zenKeySource = "~/.local/share/opencode/auth.json#opencode";
   }
 
   const cookie = firstEnv(ZEN_COOKIE_ENV);
   if (cookie) {
     resolved.authCookie = cookie.value;
-    resolved.cookieSource = `env:${cookie.name}`;
   }
 
   const workspace = firstEnv(ZEN_WORKSPACE_ENV);
   if (workspace) {
     resolved.workspaceId = workspace.value;
-    resolved.workspaceSource = `env:${workspace.name}`;
   }
 
   return resolved;
@@ -237,7 +214,6 @@ function resolveOpenCodeAuth(): OpenCodeResolvedAuth {
 
 async function attachPiOpenCodeKey(
   resolved: OpenCodeResolvedAuth,
-  authStatus: SubscriptionAuthStatus,
   auth: SubscriptionAuthStorage,
 ): Promise<void> {
   // Pi's own OpenCode Go login holds exactly the key Go usage needs.
@@ -245,7 +221,6 @@ async function attachPiOpenCodeKey(
     const goKey = (await auth.getApiKey("opencode-go", { includeFallback: false }))?.trim();
     if (goKey) {
       resolved.goApiKey = goKey;
-      resolved.goKeySource = "Pi /login opencode-go";
     }
   }
 
@@ -253,14 +228,11 @@ async function attachPiOpenCodeKey(
   if (!piKey) {
     return;
   }
-  const source = authSourceLabel(authStatus) ?? "pi-auth:opencode";
   if (!resolved.goApiKey) {
     resolved.goApiKey = piKey;
-    resolved.goKeySource = source;
   }
   if (!resolved.zenApiKey) {
     resolved.zenApiKey = piKey;
-    resolved.zenKeySource = source;
   }
 }
 
@@ -284,12 +256,12 @@ function redactSecrets(text: string, secrets: Array<string | undefined>): string
 
 function sanitizeError(error: unknown, secrets: Array<string | undefined>): string {
   if (error instanceof Error && error.name === "TimeoutError") {
-    return "OpenCode request timed out.";
+    return "OpenCode didn't answer in time.";
   }
   if (error instanceof Error && error.message.trim().length > 0) {
     return redactSecrets(error.message.replace(/\s+/g, " ").trim(), secrets);
   }
-  return "Unknown OpenCode request error.";
+  return "OpenCode request failed.";
 }
 
 async function fetchText(
@@ -328,7 +300,7 @@ function parseGoUsageWindow(
     label,
     usedPercent: clamped,
     resetAt: parseDate(payload?.resetsAt),
-    statusLabel: rateLimited ? "limited" : `${formatCurrency(remainingUsd)} left`,
+    statusLabel: rateLimited ? "limit reached" : `${formatCurrency(remainingUsd)} left`,
     detailLabel: `${formatCurrency(usedUsd)}/${formatCurrency(limitUsd)} · ${formatRemainingPercent(clamped)}`,
     notches: [50, 75, 90],
   };
@@ -355,17 +327,17 @@ async function loadGoUsage(apiKey: string): Promise<GoUsageResult> {
     if (status === 403 && /subscription required|entitlement/i.test(detail)) {
       throw new Error(detail || "OpenCode Go subscription required.");
     }
-    throw new Error(detail ? `OpenCode Go usage request failed (${status}). ${detail}` : `OpenCode Go usage request failed (${status}).`);
+    throw new Error(detail ? `Go usage request failed (HTTP ${status}): ${detail}` : `Go usage request failed (HTTP ${status}).`);
   }
 
   if (status < 200 || status >= 300) {
-    throw new Error(`OpenCode Go usage request failed (${status}).`);
+    throw new Error(`Go usage request failed (HTTP ${status}).`);
   }
 
   const parsed = JSON.parse(body) as GoUsageResponse;
   const usage = parsed.usage;
   if (!usage || typeof usage !== "object") {
-    throw new Error("OpenCode Go usage response did not include a usage object.");
+    throw new Error("OpenCode sent Go usage in a format this version can't read.");
   }
 
   const windows: SubscriptionUsageWindowDefinition[] = [];
@@ -377,7 +349,7 @@ async function loadGoUsage(apiKey: string): Promise<GoUsageResult> {
   }
 
   if (windows.length === 0) {
-    throw new Error("OpenCode Go usage response did not include any usable windows.");
+    throw new Error("OpenCode sent Go usage in a format this version can't read.");
   }
 
   const weekly = windows.find((window) => window.label === "Weekly");
@@ -489,15 +461,15 @@ async function loadZenUsage(cookie: string, workspaceId: string): Promise<ZenUsa
   });
 
   if (status === 401 || status === 403) {
-    throw new Error("OpenCode Zen billing page rejected the console cookie.");
+    throw new Error("The Zen console cookie was rejected. Copy a fresh one into OPENCODE_AUTH_COOKIE.");
   }
   if (status < 200 || status >= 300) {
-    throw new Error(`OpenCode Zen billing request failed (${status}).`);
+    throw new Error(`Zen balance request failed (HTTP ${status}).`);
   }
 
   const credits = parseZenBillingHtml(body);
   if (!credits) {
-    throw new Error("OpenCode Zen billing page did not include parseable balance data.");
+    throw new Error("OpenCode's billing page changed, so the Zen balance can't be read.");
   }
 
   const usedPercent =
@@ -517,7 +489,7 @@ async function loadZenUsage(cookie: string, workspaceId: string): Promise<ZenUsa
     remainingLabel,
     note: "Zen dollars are unofficial workspace billing HTML scrape (1e8 units = $1). No official Zen balance API exists yet.",
     window: {
-      label: "Zen Credits",
+      label: "Zen balance",
       usedPercent,
       statusLabel: remainingLabel,
       detailLabel,
@@ -530,27 +502,18 @@ function joinStatus(parts: Array<string | undefined>): string {
   return parts.filter((part): part is string => Boolean(part?.trim())).join(" • ");
 }
 
-function uniqueNotes(notes: Array<string | undefined>): string[] {
-  return [...new Set(notes.filter((note): note is string => Boolean(note)))];
-}
-
 export async function loadOpenCodeRuntimeState(
   authStorage: SubscriptionAuthStorage = createSubscriptionAuthStorage(),
 ): Promise<SubscriptionProviderRuntimeState> {
-  const authStatus = authStorage.getAuthStatus("opencode");
   const resolved = resolveOpenCodeAuth();
-  await attachPiOpenCodeKey(resolved, authStatus, authStorage);
+  await attachPiOpenCodeKey(resolved, authStorage);
   const secrets = [resolved.goApiKey, resolved.zenApiKey, resolved.authCookie];
 
   if (!resolved.goApiKey && !resolved.authCookie) {
     return {
       state: "error",
-      implementationStatus: "implemented",
-      statusLine: "auth missing",
       errorMessage:
-        "Add an OpenCode API key for Go (OPENCODE_GO_API_KEY / ~/.local/share/opencode/auth.json) and/or OPENCODE_AUTH_COOKIE + OPENCODE_WORKSPACE_ID for unofficial Zen dollars.",
-      authHint:
-        "Go uses a Bearer API key. Zen dollars still need an unofficial console cookie until OpenCode ships a balance API.",
+        "Not set up. Run /login and choose OpenCode Go, or set OPENCODE_GO_API_KEY.",
       usageWindows: [],
     };
   }
@@ -566,22 +529,21 @@ export async function loadOpenCodeRuntimeState(
         return { goError: sanitizeError(error, secrets) };
       }
     })(),
-    (async (): Promise<{ zen?: ZenUsageResult; zenError?: string; workspaceId?: string; workspaceSource?: string }> => {
+    (async (): Promise<{ zen?: ZenUsageResult; zenError?: string; workspaceId?: string }> => {
       if (!resolved.authCookie) {
         return {
           zenError:
-            "Zen dollars need unofficial OPENCODE_AUTH_COOKIE + OPENCODE_WORKSPACE_ID until an official balance API exists.",
+            "A Zen balance needs OPENCODE_AUTH_COOKIE and OPENCODE_WORKSPACE_ID.",
         };
       }
       try {
         const workspaceId = resolved.workspaceId ?? (await discoverWorkspaceId(resolved.authCookie));
         if (!workspaceId) {
-          return { zenError: "OpenCode Zen needs OPENCODE_WORKSPACE_ID (or a cookie that can discover wrk_…)." };
+          return { zenError: "A Zen balance needs OPENCODE_WORKSPACE_ID." };
         }
         return {
           zen: await loadZenUsage(resolved.authCookie, workspaceId),
           workspaceId,
-          workspaceSource: resolved.workspaceId ? resolved.workspaceSource : "discovered from opencode.ai",
         };
       } catch (error) {
         return { zenError: sanitizeError(error, secrets) };
@@ -595,7 +557,6 @@ export async function loadOpenCodeRuntimeState(
   const zenError = zenResult.zenError;
   if (zenResult.workspaceId && !resolved.workspaceId) {
     resolved.workspaceId = zenResult.workspaceId;
-    resolved.workspaceSource = zenResult.workspaceSource;
   }
 
   const usageWindows = [...(zen ? [zen.window] : []), ...(go?.windows ?? [])];
@@ -604,39 +565,13 @@ export async function loadOpenCodeRuntimeState(
       state: "error",
       // A key without a Go subscription and no Zen cookie: nothing this tab could ever show.
       noSubscription: !resolved.authCookie && /subscription required|entitlement/i.test(goError ?? ""),
-      implementationStatus: "implemented",
-      statusLine: "unavailable",
       errorMessage: joinStatus([goError, zenError]),
-      authHint: joinStatus([
-        resolved.goKeySource ? `Go key: ${resolved.goKeySource}` : undefined,
-        resolved.cookieSource ? `Zen cookie: ${resolved.cookieSource}` : undefined,
-      ]),
       usageWindows: [],
     };
   }
 
   return {
     state: "ready",
-    implementationStatus: "implemented",
-    statusLine: joinStatus([
-      go?.weeklyRemainingLabel ? `Go weekly ${go.weeklyRemainingLabel}` : goError,
-      zen ? `Zen ${zen.remainingLabel}` : undefined,
-    ]),
-    description: "OpenCode Go weekly remaining from the official usage API, plus unofficial Zen dollars left/used.",
-    authHint: joinStatus([
-      resolved.goKeySource ? `Go key: ${resolved.goKeySource}` : undefined,
-      resolved.cookieSource ? `Zen cookie: ${resolved.cookieSource}` : undefined,
-      resolved.workspaceSource ? `Zen workspace: ${resolved.workspaceSource}` : undefined,
-    ]),
-    usageHint: zen
-      ? "Zen remaining/used dollars come from the unofficial billing page. Go remaining dollars use published $12 / $30 / $60 limits."
-      : "Go remaining dollars are derived from official used-percent plus published $12 / $30 / $60 limits.",
-    notes: uniqueNotes([
-      go?.note,
-      zen?.note,
-      goError && zen ? `Go unavailable: ${goError}` : undefined,
-      !zen && zenError ? zenError : undefined,
-    ]),
     usageWindows,
     lastUpdatedAt: new Date(),
   };
@@ -647,23 +582,7 @@ export const opencodeProvider: SubscriptionProviderDefinition = {
   label: "OpenCode",
   shortLabel: "OpenCode",
   enabledByDefault: true,
-  implementationStatus: "implemented",
-  description: "OpenCode Go weekly remaining plus unofficial Zen dollars left/used.",
-  authHint:
-    "Go: OPENCODE_GO_API_KEY, OPENCODE_API_KEY, or ~/.local/share/opencode/auth.json. Zen: OPENCODE_AUTH_COOKIE and OPENCODE_WORKSPACE_ID.",
-  usageHint:
-    "Go uses official GET /zen/go/v1/usage. Zen dollars come from an unofficial workspace billing scrape until a balance API exists.",
-  stability: "mixed",
-  notes: [
-    "Go: official GET https://opencode.ai/zen/go/v1/usage with Bearer API key.",
-    "Zen: unofficial GET https://opencode.ai/workspace/{id}/billing cookie scrape. No official Zen balance API yet.",
-  ],
-  usageWindows: [
-    { label: "Zen Credits", statusLabel: "loading…", notches: [50, 75, 90] },
-    { label: "5h", statusLabel: "loading…", notches: [50, 75, 90] },
-    { label: "Weekly", statusLabel: "loading…", notches: [50, 75] },
-    { label: "Monthly", statusLabel: "loading…", notches: [50, 75, 90] },
-  ],
+  authHint: "Run /login and choose OpenCode Go, or set OPENCODE_GO_API_KEY. A Zen balance needs OPENCODE_AUTH_COOKIE and OPENCODE_WORKSPACE_ID.",
   // A Pi login, OpenCode's own login or its environment variables.
   isSetUp: (stored) => {
     if (hasStoredLogin(stored, "opencode", "opencode-go")) {

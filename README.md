@@ -1,8 +1,8 @@
 # pi-subscription-usage
 
-Subscription usage for every account of every provider in [Pi](https://pi.dev): Anthropic
-(Claude), OpenAI (ChatGPT/Codex), GitHub Copilot, OpenRouter, xAI SuperGrok, Kimi Coding Plan
-and OpenCode Go/Zen.
+See how much of your subscription limits you've used, for every account, without leaving
+[Pi](https://pi.dev). Works with Claude, ChatGPT, GitHub Copilot, OpenRouter, xAI SuperGrok,
+Kimi Coding Plan and OpenCode.
 
 ## Install
 
@@ -14,44 +14,39 @@ Requires Pi 1.x.
 
 ## Use
 
-```text
-/usage
-```
+Run `/usage` (`/subscriptions` works too). There's a tab per provider, and each tab lists
+your accounts with their limits, how much is used, when each one resets, and the email and
+plan when the provider tells us.
 
-(or `/subscriptions`) opens a tabbed view with one tab per provider. Each tab shows every logged-in account with
-its usage windows (e.g. 5-hour and weekly), reset times, and — where the provider reports
-them — email and plan.
+You only see providers you actually have. A tab shows up once you log in, or add an API key
+for OpenRouter or OpenCode, and a provider that turns out to have no subscription behind
+your login is hidden for the rest of the session.
 
-Only providers you actually have show up: a tab appears once you log in (or add an API key
-for OpenRouter/OpenCode), and a provider that reports no subscription behind your login is
-dropped for the session. Settings (`s`) list every provider and mark the ones that are not
-set up or have no subscription.
+Keys: `Tab` or the arrow keys switch providers, `r` refreshes, `s` opens settings, `Esc`
+closes. In settings you can choose whether bars show what's used or what's left, relative or
+absolute reset times, and which providers may appear. Settings are saved in
+`~/.pi/agent/subscription-usage.json`.
 
-- `Tab` / `←` `→` switch providers, `r` refreshes, `Esc` closes.
-- `s` opens settings: which providers may show, **used vs. remaining**, relative or absolute
-  reset times, and bar markers.
+## Several accounts
 
-Settings are saved to `~/.pi/agent/subscription-usage.json`.
+Every login of a provider counts as an account: its own (`anthropic`) and numbered extras
+(`anthropic-account-2`), which is what
+[pi-multi-account](https://github.com/kacperkwapisz/pi-multi-account) creates. ChatGPT logins
+from Pi's Sign in with ChatGPT appear in the ChatGPT tab. If you've logged into the same
+account twice, the second one says so.
 
-## Multiple accounts
+With pi-multi-account installed, you can also switch accounts here: pick one with the up and
+down arrows and press Enter. Without it, the view only shows usage. The two find each other
+over Pi's `pi.events` bus, and neither needs the other.
 
-Accounts are found from Pi's logins: a provider's own login (`anthropic`) plus numbered
-extra accounts (`anthropic-account-2`, …), as created by
-[pi-multi-account](https://github.com/kacperkwapisz/pi-multi-account). ChatGPT accounts from
-Pi's **Sign in with ChatGPT** (`openai`) appear in the OpenAI/Codex tab. The same account
-logged in twice is marked as such.
+Pi supplies the login tokens and refreshes them when they expire, the same as for normal
+requests.
 
-With pi-multi-account installed, **↑↓ selects an account and Enter switches to it**, keeping
-your model when that account offers it. Without it, the view is read-only. The two extensions
-find each other over Pi's `pi.events` bus; neither depends on the other.
+## Where the numbers come from
 
-Tokens come from Pi, so expired logins are refreshed by Pi exactly as for normal requests.
-
-## Data sources
-
-Most providers have no official usage API. This extension uses the same endpoints their own
-apps use; these are undocumented and can change without notice. When a response can't be
-read, the account shows an error instead of guessed numbers.
+Most providers don't publish a usage API, so this asks the same endpoints their own apps use.
+Those aren't documented and can change. If a reply can't be read, you get an error for that
+account rather than made-up numbers.
 
 ## Development
 

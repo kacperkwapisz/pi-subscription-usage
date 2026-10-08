@@ -14,13 +14,7 @@ const provider = (id: "anthropic" | "xai", label: string): SubscriptionProviderD
   label,
   shortLabel: label,
   enabledByDefault: true,
-  implementationStatus: "implemented",
-  description: "",
   authHint: "",
-  usageHint: "",
-  stability: "mixed",
-  notes: [],
-  usageWindows: [],
   loadRuntimeState: async () => ({ state: "ready" }),
 });
 const account = (providerId: string, number: number): SubscriptionAccount => ({
@@ -79,6 +73,17 @@ async function openDialog(options: {
   return dialog;
 }
 
+test("reset times read like a person would say them", async () => {
+  const { formatRelativeResetTime } = await import("../src/extensions/core/ui/subscriptions-dialog.ts");
+  const at = (ms: number) => new Date(Date.now() + ms);
+  const minute = 60_000;
+  assert.equal(formatRelativeResetTime(at(20_000)), "1m");
+  assert.equal(formatRelativeResetTime(at(41 * minute)), "41m");
+  assert.equal(formatRelativeResetTime(at((2 * 60 + 14) * minute - 500)), "2h 14m");
+  assert.equal(formatRelativeResetTime(at(2 * 60 * minute - 500)), "2h");
+  assert.equal(formatRelativeResetTime(at((30 * 60) * minute - 500)), "1d 6h");
+});
+
 test("several accounts: one section each, with who they are, usage on one line, and duplicates flagged", async () => {
   const dialog = await openDialog({
     displayMode: "remaining",
@@ -92,9 +97,9 @@ test("several accounts: one section each, with who they are, usage on one line, 
   assert.match(text, / Anthropic \(3\) /, "tab shows the account count");
   assert.doesNotMatch(text, /implemented|source/, "no developer metadata");
   assert.match(text, /● Account 1 · kacper@example\.com · Team · Max 5x +in use/);
-  assert.match(text, /Account 2 · kacper@example\.com · Team · Max 5x +same account as Account 1/);
+  assert.match(text, /Account 2 · kacper@example\.com · Team · Max 5x +same as account 1/);
   assert.match(text, /Account 3 · nadia@example\.com/);
-  assert.match(text, /5h +\S+ +73% left · Resets in 0[12]h \d\dm/);
+  assert.match(text, /5h +\S+ +73% left · resets in (2h|1h 59m) /);
   assert.match(text, /7d Fable +\S+ +100% left/);
 });
 
@@ -121,7 +126,7 @@ test("with pi-multi-account, arrows pick an account and Enter switches to it", a
 
   let text = dialog.render(100).join("\n");
   assert.match(text, />● Account 1 · kacper@example\.com/, "starts on the account in use");
-  assert.match(text, /↑↓ select • Enter use account/);
+  assert.match(text, /↑↓ account • Enter use/);
 
   dialog.handleInput("\x1b[B");
   dialog.handleInput("\x1b[B");
@@ -139,7 +144,7 @@ test("without pi-multi-account the view stays read-only", async () => {
   dialog.handleInput("\x1b[B");
   dialog.handleInput("\r");
   const text = dialog.render(100).join("\n");
-  assert.doesNotMatch(text, /Enter use account/);
+  assert.doesNotMatch(text, /Enter use/);
   assert.doesNotMatch(text, /^.{3}>/m, "no selection pointer");
 });
 

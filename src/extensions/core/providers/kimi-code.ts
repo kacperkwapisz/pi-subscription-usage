@@ -1,4 +1,4 @@
-import { createSubscriptionAuthStorage, type SubscriptionAuthStorage, type SubscriptionAuthStatus } from "../auth.ts";
+import { createSubscriptionAuthStorage, type SubscriptionAuthStorage } from "../auth.ts";
 import type {
   SubscriptionProviderDefinition,
   SubscriptionProviderRuntimeState,
@@ -78,18 +78,6 @@ function parseDate(value: unknown): Date | undefined {
 function isOAuthCredential(value: unknown): boolean {
   const credential = asRecord(value);
   return credential?.type === "oauth" && typeof credential.access === "string" && credential.access.length > 0;
-}
-
-function authSourceLabel(authStatus: SubscriptionAuthStatus): string | undefined {
-  if (authStatus.source === "stored") {
-    return "Pi /login kimi-coding";
-  }
-
-  if (authStatus.source === "environment") {
-    return authStatus.label ?? "environment";
-  }
-
-  return undefined;
 }
 
 function kimiCodingBaseUrl(): string {
@@ -278,12 +266,9 @@ export async function loadKimiCodeRuntimeState(
     const apiKeyConfigured = authStatus.source === "environment" || asRecord(storedCredential)?.type === "api_key";
     return {
       state: "error",
-      implementationStatus: "implemented",
-      statusLine: apiKeyConfigured ? "subscription login required" : "auth missing",
       errorMessage: apiKeyConfigured
-        ? "KIMI_API_KEY provides billed Moonshot platform access, not Kimi Coding Plan quota. Run /login kimi-coding and sign in with your Coding Plan account."
-        : "No Kimi Coding Plan OAuth credential found. Run /login kimi-coding and sign in.",
-      authHint: "Uses the Pi-managed kimi-coding OAuth login; a platform API key is intentionally not used for this personal subscription meter.",
+        ? "KIMI_API_KEY is a pay-per-use key with no Coding Plan limits. Run /login kimi-coding and sign in with your Coding Plan account."
+        : "Not logged in. Run /login kimi-coding.",
       usageWindows: [],
     };
   }
@@ -292,9 +277,7 @@ export async function loadKimiCodeRuntimeState(
   if (!accessToken) {
     return {
       state: "error",
-      implementationStatus: "implemented",
-      statusLine: "auth unavailable",
-      errorMessage: "The Pi Kimi login has no usable access token. Run /login kimi-coding again.",
+      errorMessage: "The Kimi login stopped working. Run /login kimi-coding again.",
       usageWindows: [],
     };
   }
@@ -311,34 +294,15 @@ export async function loadKimiCodeRuntimeState(
     if (usageWindows.length === 0) {
       return {
         state: "error",
-        implementationStatus: "implemented",
-        statusLine: "schema mismatch",
-        errorMessage: "Kimi returned usage data but no recognizable quota window or percentage.",
-        authHint: "This provider relies on an undocumented Kimi For Coding usages endpoint that may change without notice.",
+        errorMessage: "Kimi sent usage in a format this version can't read.",
         usageWindows: [],
       };
     }
 
-    const primary = usageWindows[0]!;
     const membershipLevel = response.user?.membership?.level;
-    const parallelLimit = response.parallel?.limit;
-    const notes = [
-      "Uses the undocumented Kimi For Coding GET /v1/usages endpoint (same read-only call CodexBar's Kimi provider family uses).",
-      "Quota counters arrive as numeric strings and are parsed without inventing missing values.",
-      ...(membershipLevel ? [`Membership tier reported by Kimi: ${membershipLevel}.`] : []),
-      ...(parallelLimit != null ? [`Parallel coding sessions allowed on this plan: ${parallelLimit}.`] : []),
-    ];
-
     return {
       state: "ready",
-      implementationStatus: "implemented",
-      statusLine: primary.usedPercent != null
-        ? `${primary.label.toLowerCase()} ${Math.round(primary.usedPercent)}% used`
-        : `${primary.label.toLowerCase()} quota active; usage not reported`,
-      description: "Live Kimi Coding Plan usage for the current Pi kimi-coding login.",
-      authHint: authSourceLabel(authStatus) ? `token: ${authSourceLabel(authStatus)}` : undefined,
-      usageHint: "Shows the weekly Coding Plan quota plus the rolling short window reported by Kimi.",
-      notes,
+      account: membershipLevel ? { plan: String(membershipLevel) } : undefined,
       usageWindows,
       lastUpdatedAt: new Date(),
     };
@@ -346,10 +310,7 @@ export async function loadKimiCodeRuntimeState(
     const message = error instanceof Error ? error.message : String(error);
     return {
       state: "error",
-      implementationStatus: "implemented",
-      statusLine: "fetch failed",
-      errorMessage: `Failed to load Kimi Coding Plan usage: ${message}`,
-      authHint: "Verify the Kimi Coding Plan login is valid, then press r to retry.",
+      errorMessage: `Couldn't load usage: ${message}`,
       usageWindows: [],
     };
   }
@@ -360,17 +321,6 @@ export const kimiCodeProvider: SubscriptionProviderDefinition = {
   label: "Kimi Coding Plan",
   shortLabel: "Kimi",
   enabledByDefault: true,
-  implementationStatus: "implemented",
-  description: "Live Kimi Coding Plan usage for the current Pi kimi-coding login.",
-  authHint: "Run /login kimi-coding and sign in. KIMI_API_KEY is not used for Coding Plan quota.",
-  usageHint: "Uses an undocumented Kimi For Coding usages endpoint for the weekly quota and rolling short window.",
-  stability: "unofficial",
-  notes: [
-    "This provider relies on the undocumented Kimi For Coding GET /v1/usages endpoint.",
-    "Not to be confused with Kilo Code, which is a separate product and provider.",
-  ],
-  usageWindows: [
-    { label: "Weekly", statusLabel: "loading…", notches: [50, 75, 90] },
-  ],
+  authHint: "Run /login kimi-coding. A KIMI_API_KEY has no Coding Plan limits to show.",
   loadRuntimeState: loadKimiCodeRuntimeState,
 };

@@ -1,7 +1,6 @@
 import { execFileSync } from "node:child_process";
 import {
   createSubscriptionAuthStorage,
-  type SubscriptionAuthStatus,
   type SubscriptionAuthStorage,
 } from "../auth.ts";
 import type {
@@ -56,7 +55,6 @@ interface GitHubCopilotUsageResponse {
 
 interface GitHubCopilotFetchResult {
   response: GitHubCopilotUsageResponse;
-  authSource: string;
 }
 
 function parseNumber(value: unknown): number | undefined {
@@ -89,26 +87,6 @@ function formatInteger(value: number): string {
 
 function formatPercent(percent: number | undefined): string {
   return `${Math.round(percent ?? 0)}%`;
-}
-
-function authSourceLabel(authStatus: SubscriptionAuthStatus): string | undefined {
-  if (authStatus.source === "environment") {
-    return authStatus.label ?? "environment";
-  }
-
-  if (authStatus.source === "stored") {
-    return "Pi auth.json";
-  }
-
-  if (authStatus.source === "runtime") {
-    return "runtime token";
-  }
-
-  if (authStatus.source === "fallback") {
-    return "fallback token";
-  }
-
-  return undefined;
 }
 
 function parseDateish(value: unknown): Date | undefined {
@@ -223,10 +201,10 @@ async function fetchGitHubCopilotUsage(authStorage: SubscriptionAuthStorage): Pr
   const providerAccessToken = await authStorage.getApiKey("github-copilot");
   const cliToken = ghCliToken();
 
-  const candidates: Array<{ token?: string; source: string; tryExchange: boolean }> = [
-    { token: storedOAuthToken, source: "Pi GitHub OAuth refresh token", tryExchange: true },
-    { token: providerAccessToken, source: "Pi GitHub Copilot access token", tryExchange: true },
-    { token: cliToken, source: "gh auth token", tryExchange: false },
+  const candidates: Array<{ token?: string; tryExchange: boolean }> = [
+    { token: storedOAuthToken, tryExchange: true },
+    { token: providerAccessToken, tryExchange: true },
+    { token: cliToken, tryExchange: false },
   ];
 
   const seen = new Set<string>();
@@ -245,10 +223,7 @@ async function fetchGitHubCopilotUsage(authStorage: SubscriptionAuthStorage): Pr
         if (exchanged) {
           try {
             const response = await tryUserEndpointWithAuthHeader(`Bearer ${exchanged}`);
-            return {
-              response,
-              authSource: `${candidate.source} → exchanged Copilot token`,
-            };
+            return { response };
           } catch (error: unknown) {
             lastError = error instanceof Error ? error : new Error(String(error));
           }
@@ -261,10 +236,7 @@ async function fetchGitHubCopilotUsage(authStorage: SubscriptionAuthStorage): Pr
     for (const authHeader of [`token ${token}`, `Bearer ${token}`]) {
       try {
         const response = await tryUserEndpointWithAuthHeader(authHeader);
-        return {
-          response,
-          authSource: candidate.source,
-        };
+        return { response };
       } catch (error: unknown) {
         lastError = error instanceof Error ? error : new Error(String(error));
       }
@@ -279,7 +251,7 @@ function createTimingDetails(resetAt: Date | undefined): { detailParts: string[]
   const detailParts: string[] = [];
 
   if (timing.pacePercent != null) {
-    detailParts.push(`${formatPercent(timing.pacePercent)} elapsed`);
+    detailParts.push(`${formatPercent(timing.pacePercent)} of the period has passed`);
   }
 
   return {
@@ -298,7 +270,7 @@ function createSnapshotWindow(
   if (!snapshot) {
     return {
       label,
-      statusLabel: "Not reported",
+      statusLabel: "not reported",
       detailLabel: detailParts.length > 0 ? detailParts.join(" • ") : undefined,
       resetAt,
       pacePercent,
@@ -308,7 +280,7 @@ function createSnapshotWindow(
   if (snapshot.unlimited) {
     return {
       label,
-      statusLabel: "Unlimited",
+      statusLabel: "unlimited",
       detailLabel: detailParts.length > 0 ? detailParts.join(" • ") : undefined,
       resetAt,
       pacePercent,
@@ -327,7 +299,7 @@ function createSnapshotWindow(
     }
     return {
       label,
-      statusLabel: "No cap reported",
+      statusLabel: "no limit",
       detailLabel: fallbackParts.length > 0 ? fallbackParts.join(" • ") : undefined,
       resetAt,
       pacePercent,
@@ -410,83 +382,25 @@ function parseGitHubCopilotWindows(response: GitHubCopilotUsageResponse): Subscr
   return legacyWindows;
 }
 
-function buildStatusLine(windows: SubscriptionUsageWindowDefinition[]): string {
-  const premium = windows.find((window) => window.label === "Premium / month");
-  const chat = windows.find((window) => window.label === "Chat / month");
-  const parts: string[] = [];
-
-  if (premium) {
-    parts.push(
-      premium.usedPercent != null
-        ? `premium ${formatPercent(premium.usedPercent)} used`
-        : `premium ${premium.statusLabel?.toLowerCase() ?? "available"}`,
-    );
-  }
-
-  if (chat) {
-    parts.push(
-      chat.usedPercent != null
-        ? `chat ${formatPercent(chat.usedPercent)} used`
-        : `chat ${chat.statusLabel?.toLowerCase() ?? "available"}`,
-    );
-  }
-
-  return parts.join(" • ") || "live usage data";
-}
-
 export async function loadGitHubCopilotRuntimeState(
   authStorage: SubscriptionAuthStorage = createSubscriptionAuthStorage(),
 ): Promise<SubscriptionProviderRuntimeState> {
-  const authStatus = authStorage.getAuthStatus("github-copilot");
-
   try {
-    const { response, authSource } = await fetchGitHubCopilotUsage(authStorage);
+    const { response } = await fetchGitHubCopilotUsage(authStorage);
     const usageWindows = parseGitHubCopilotWindows(response);
 
     if (usageWindows.length === 0) {
       return {
         state: "error",
-        implementationStatus: "implemented",
-        statusLine: "schema mismatch",
-        errorMessage: "GitHub Copilot returned usage data, but no premium/chat limits could be parsed from the current response schema.",
-        authHint: "This provider depends on internal GitHub Copilot quota endpoints that may change without notice.",
+        errorMessage: "Copilot sent usage in a format this version can't read.",
         usageWindows: [],
       };
     }
 
-    const notes = [
-      "Uses the internal GitHub Copilot GET /copilot_internal/user endpoint.",
-      "The progress-bar notch marks the current point in the monthly window.",
-      "This implementation focuses on premium and chat limits first.",
-    ];
-
-    if (response.copilot_plan) {
-      notes.unshift(`Plan: ${response.copilot_plan}`);
-    } else if (response.access_type_sku) {
-      notes.unshift(`SKU: ${response.access_type_sku}`);
-    }
-
-    const premiumWindow = usageWindows.find((window) => window.label === "Premium / month");
-    const chatWindow = usageWindows.find((window) => window.label === "Chat / month");
-
-    if (chatWindow?.statusLabel === "Unlimited") {
-      notes.push("Chat is currently reported as unlimited on this plan.");
-    }
-
-    if (premiumWindow?.detailLabel?.includes("overage")) {
-      notes.push("Premium interactions may allow or report overage depending on the current Copilot plan.");
-    }
-
+    const plan = response.copilot_plan ?? response.access_type_sku;
     return {
       state: "ready",
-      implementationStatus: "implemented",
-      statusLine: buildStatusLine(usageWindows),
-      description: "Live personal GitHub Copilot premium and chat limit usage.",
-      authHint: [authSourceLabel(authStatus) ? `stored auth: ${authSourceLabel(authStatus)}` : undefined, `active path: ${authSource}`]
-        .filter(Boolean)
-        .join(" • "),
-      usageHint: "Shows the personal monthly premium and chat counters returned by GitHub Copilot’s internal user quota endpoint.",
-      notes,
+      account: plan ? { plan: plan.charAt(0).toUpperCase() + plan.slice(1).replace(/_/g, " ") } : undefined,
       usageWindows,
       lastUpdatedAt: new Date(),
     };
@@ -494,10 +408,7 @@ export async function loadGitHubCopilotRuntimeState(
     const message = error instanceof Error ? error.message : String(error);
     return {
       state: "error",
-      implementationStatus: "implemented",
-      statusLine: "fetch failed",
-      errorMessage: `Failed to load GitHub Copilot usage: ${message}`,
-      authHint: "Verify GitHub/Copilot login is still valid, then press r to retry.",
+      errorMessage: `Couldn't load usage: ${message}`,
       usageWindows: [],
     };
   }
@@ -508,18 +419,6 @@ export const githubCopilotProvider: SubscriptionProviderDefinition = {
   label: "GitHub Copilot",
   shortLabel: "Copilot",
   enabledByDefault: true,
-  implementationStatus: "implemented",
-  description: "Live personal GitHub Copilot premium and chat limit usage.",
-  authHint: "Uses Pi-managed GitHub Copilot auth, with GitHub token exchange/fallbacks when needed.",
-  usageHint: "Uses internal GitHub Copilot quota endpoints for personal monthly counters.",
-  stability: "mixed",
-  notes: [
-    "This provider relies on internal GitHub Copilot quota endpoints.",
-    "The current implementation focuses on premium and chat limits.",
-  ],
-  usageWindows: [
-    { label: "Premium / month", statusLabel: "loading…", notches: [50, 75, 90] },
-    { label: "Chat / month", statusLabel: "loading…" },
-  ],
+  authHint: "Run /login and choose GitHub Copilot.",
   loadRuntimeState: loadGitHubCopilotRuntimeState,
 };

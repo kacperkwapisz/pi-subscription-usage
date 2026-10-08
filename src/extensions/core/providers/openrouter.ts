@@ -1,5 +1,5 @@
 import { hasEnv, hasStoredLogin } from "../setup.ts";
-import { createSubscriptionAuthStorage, type SubscriptionAuthStorage, type SubscriptionAuthStatus } from "../auth.ts";
+import { createSubscriptionAuthStorage, type SubscriptionAuthStorage } from "../auth.ts";
 import type {
   SubscriptionProviderDefinition,
   SubscriptionProviderRuntimeState,
@@ -74,17 +74,6 @@ function formatCurrency(value: number): string {
   }).format(value);
 }
 
-function formatUtcDate(value: Date): string {
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone: "UTC",
-  }).format(value);
-}
-
 function parseDateish(value: unknown): Date | undefined {
   if (typeof value !== "string" || value.length === 0) {
     return undefined;
@@ -109,26 +98,6 @@ function nextUtcMonday(): Date {
 function nextUtcMonthStart(): Date {
   const now = new Date();
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0));
-}
-
-function authSourceLabel(authStatus: SubscriptionAuthStatus): string | undefined {
-  if (authStatus.source === "environment") {
-    return authStatus.label ?? "environment";
-  }
-
-  if (authStatus.source === "stored") {
-    return "Pi auth.json";
-  }
-
-  if (authStatus.source === "runtime") {
-    return "runtime key";
-  }
-
-  if (authStatus.source === "fallback") {
-    return "fallback key";
-  }
-
-  return undefined;
 }
 
 async function fetchOpenRouterJson<T>(url: string, accessToken: string): Promise<T> {
@@ -172,8 +141,8 @@ function buildOpenRouterUsageWindows(
       // No `resetAt` / `pacePercent` is set, so no "now" notch is rendered.
       label: "Credits",
       usedPercent: safePercent(totalUsage, totalCredits),
-      statusLabel: formatCurrency(remainingCredits),
-      detailLabel: `${formatCurrency(totalUsage)}/${formatCurrency(totalCredits)}`,
+      statusLabel: `${formatCurrency(remainingCredits)} left`,
+      detailLabel: `${formatCurrency(totalUsage)} of ${formatCurrency(totalCredits)} used`,
       notches: [50, 75, 90],
     });
   }
@@ -193,23 +162,23 @@ function buildOpenRouterUsageWindows(
     const resetAt = parseDateish(keyData.limit_reset) ?? nextUtcMonthStart();
 
     windows.push({
-      label: "Monthly Budget",
+      label: "Monthly budget",
       usedPercent: safePercent(usageMonthly, limit),
-      detailLabel: `${formatCurrency(usageMonthly)}/${formatCurrency(limit)} • ${formatCurrency(remaining)} left`,
+      detailLabel: `${formatCurrency(usageMonthly)} of ${formatCurrency(limit)} used, ${formatCurrency(remaining)} left`,
       resetAt,
       notches: [50, 75, 90],
     });
   } else if (limitRemaining != null && totalCredits == null) {
     windows.push({
-      label: "Key Balance",
-      statusLabel: formatCurrency(limitRemaining),
+      label: "Key balance",
+      statusLabel: `${formatCurrency(limitRemaining)} left`,
       notches: [50, 75, 90],
     });
   }
 
   const dailyResetAt = nextUtcMidnight();
   windows.push({
-    label: "Daily",
+    label: "Spent today",
     statusLabel: formatCurrency(usageDaily),
     resetAt: dailyResetAt,
     notches: [50],
@@ -217,7 +186,7 @@ function buildOpenRouterUsageWindows(
 
   const weeklyResetAt = nextUtcMonday();
   windows.push({
-    label: "Weekly",
+    label: "Spent this week",
     statusLabel: formatCurrency(usageWeekly),
     resetAt: weeklyResetAt,
     notches: [50, 75],
@@ -225,7 +194,7 @@ function buildOpenRouterUsageWindows(
 
   const monthlyResetAt = nextUtcMonthStart();
   windows.push({
-    label: "Monthly",
+    label: "Spent this month",
     statusLabel: formatCurrency(usageMonthly),
     resetAt: monthlyResetAt,
     notches: [50, 75, 90],
@@ -237,16 +206,12 @@ function buildOpenRouterUsageWindows(
 export async function loadOpenRouterRuntimeState(
   authStorage: SubscriptionAuthStorage = createSubscriptionAuthStorage(),
 ): Promise<SubscriptionProviderRuntimeState> {
-  const authStatus = authStorage.getAuthStatus("openrouter");
   const apiKey = await authStorage.getApiKey("openrouter");
 
   if (!apiKey) {
     return {
       state: "error",
-      implementationStatus: "implemented",
-      statusLine: "auth missing",
-      errorMessage: "No OpenRouter API key found. Configure OPENROUTER_API_KEY or store an OpenRouter key with /login.",
-      authHint: "This provider uses the official OpenRouter GET /api/v1/key endpoint.",
+      errorMessage: "Not set up. Run /login and choose OpenRouter, or set OPENROUTER_API_KEY.",
       usageWindows: [],
     };
   }
@@ -267,56 +232,12 @@ export async function loadOpenRouterRuntimeState(
         ? keyError
         : creditsError instanceof Error
           ? creditsError
-          : new Error("OpenRouter returned no usable usage data.");
+          : new Error("OpenRouter sent no usage this version can read.");
     }
-
-    const totalCredits = parseNumber(creditsData?.total_credits);
-    const totalUsage = parseNumber(creditsData?.total_usage) ?? 0;
-    const remainingCredits = totalCredits != null ? Math.max(0, totalCredits - totalUsage) : undefined;
-    const remainingKeyBalance = parseNumber(keyData?.limit_remaining);
-    const notes: string[] = [];
-
-    if (keyData?.label) {
-      notes.push(`Key label: ${keyData.label}`);
-    }
-
-    if (keyData?.is_free_tier) {
-      notes.push("Free-tier key");
-    }
-
-    if (keyData?.expires_at) {
-      const expiresAt = new Date(keyData.expires_at);
-      if (!Number.isNaN(expiresAt.getTime())) {
-        notes.push(`Key expires ${formatUtcDate(expiresAt)} UTC`);
-      }
-    }
-
-    const byokMonthly = parseNumber(keyData?.byok_usage_monthly);
-    if (byokMonthly != null && byokMonthly > 0) {
-      notes.push(`BYOK monthly usage: ${formatCurrency(byokMonthly)}`);
-      if (keyData?.include_byok_in_limit === false) {
-        notes.push("BYOK usage is excluded from the key budget limit");
-      }
-    }
-
-    if (creditsData) {
-      notes.push("Account credits loaded from GET /api/v1/credits");
-    }
-
-    const sourceLabel = authSourceLabel(authStatus);
 
     return {
       state: "ready",
-      implementationStatus: "implemented",
-      statusLine: remainingCredits != null
-        ? `${formatCurrency(remainingCredits)} credits remaining`
-        : remainingKeyBalance != null
-          ? `${formatCurrency(remainingKeyBalance)} remaining`
-          : "live key data",
-      description: "Live data from OpenRouter’s official GET /api/v1/key and GET /api/v1/credits endpoints.",
-      authHint: sourceLabel ? `Auth source: ${sourceLabel}` : undefined,
-      usageHint: "Budget, credits, and daily/weekly/monthly usage are fetched from the active OpenRouter key when available.",
-      notes,
+      account: keyData?.is_free_tier ? { plan: "Free" } : undefined,
       usageWindows: buildOpenRouterUsageWindows(keyData, creditsData),
       lastUpdatedAt: new Date(),
     };
@@ -324,10 +245,7 @@ export async function loadOpenRouterRuntimeState(
     const message = error instanceof Error ? error.message : String(error);
     return {
       state: "error",
-      implementationStatus: "implemented",
-      statusLine: "fetch failed",
-      errorMessage: `Failed to load OpenRouter usage: ${message}`,
-      authHint: "Verify the OpenRouter key and network access, then press r to retry.",
+      errorMessage: `Couldn't load usage: ${message}`,
       usageWindows: [],
     };
   }
@@ -338,22 +256,7 @@ export const openRouterProvider: SubscriptionProviderDefinition = {
   label: "OpenRouter",
   shortLabel: "OpenRouter",
   enabledByDefault: true,
-  implementationStatus: "implemented",
-  description: "Official OpenRouter key budget and usage view.",
-  authHint: "Prefer Pi-managed OpenRouter auth or OPENROUTER_API_KEY.",
-  usageHint: "Uses the official GET /api/v1/key endpoint for live key budget and usage data.",
-  stability: "official",
-  notes: [
-    "OpenRouter is the cleanest first provider to implement against.",
-    "Daily, weekly, and monthly rows are tracking windows reported by the active key.",
-  ],
-  usageWindows: [
-    { label: "Credits", statusLabel: "loading…", notches: [50, 75, 90] },
-    { label: "Monthly Budget", statusLabel: "loading…", notches: [50, 75, 90] },
-    { label: "Daily", statusLabel: "loading…", notches: [50] },
-    { label: "Weekly", statusLabel: "loading…", notches: [50, 75] },
-    { label: "Monthly", statusLabel: "loading…", notches: [50, 75, 90] },
-  ],
+  authHint: "Run /login and choose OpenRouter, or set OPENROUTER_API_KEY.",
   // An API key is all OpenRouter needs.
   isSetUp: (stored) => hasStoredLogin(stored, "openrouter") || hasEnv("OPENROUTER_API_KEY"),
   loadRuntimeState: loadOpenRouterRuntimeState,

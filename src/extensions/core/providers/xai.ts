@@ -1,4 +1,4 @@
-import { createSubscriptionAuthStorage, type SubscriptionAuthStorage, type SubscriptionAuthStatus } from "../auth.ts";
+import { createSubscriptionAuthStorage, type SubscriptionAuthStorage } from "../auth.ts";
 import type {
   SubscriptionProviderDefinition,
   SubscriptionProviderRuntimeState,
@@ -59,18 +59,6 @@ function parseDate(value: unknown): Date | undefined {
 function isOAuthCredential(value: unknown): boolean {
   const credential = asRecord(value);
   return credential?.type === "oauth" && typeof credential.access === "string" && credential.access.length > 0;
-}
-
-function authSourceLabel(authStatus: SubscriptionAuthStatus): string | undefined {
-  if (authStatus.source === "stored") {
-    return "Pi /login xai";
-  }
-
-  if (authStatus.source === "environment") {
-    return authStatus.label ?? "environment";
-  }
-
-  return undefined;
 }
 
 function xaiProxyHeaders(accessToken: string): Record<string, string> {
@@ -226,23 +214,12 @@ function createUsageWindow(response: XaiUsageResponse): SubscriptionUsageWindowD
   return {
     label: usagePeriodLabel(period?.type),
     usedPercent: usedPercent == null ? undefined : clampPercent(usedPercent),
-    statusLabel: usedPercent == null ? "Usage not reported" : undefined,
-    detailLabel: pacePercent == null ? undefined : `${Math.round(pacePercent)}% elapsed`,
+    statusLabel: usedPercent == null ? "not reported" : undefined,
+    detailLabel: pacePercent == null ? undefined : `${Math.round(pacePercent)}% of the period has passed`,
     resetAt,
     pacePercent,
     notches: [50, 75, 90],
   };
-}
-
-function productUsageNotes(productUsage: XaiProductUsage[] | undefined): string[] {
-  if (!productUsage || productUsage.length === 0) {
-    return [];
-  }
-
-  return productUsage
-    .filter((entry) => typeof entry.product === "string" && parseNumber(entry.usagePercent) != null)
-    .slice(0, 12)
-    .map((entry) => `${entry.product}: ${Math.round(clampPercent(entry.usagePercent!))}% of the shared pool used.`);
 }
 
 export async function loadXaiRuntimeState(
@@ -255,12 +232,9 @@ export async function loadXaiRuntimeState(
     const apiKeyConfigured = authStatus.source === "environment" || asRecord(storedCredential)?.type === "api_key";
     return {
       state: "error",
-      implementationStatus: "implemented",
-      statusLine: apiKeyConfigured ? "subscription login required" : "auth missing",
       errorMessage: apiKeyConfigured
-        ? "XAI_API_KEY provides billed xAI API access, not SuperGrok subscription quota. Run /login xai and choose Use a subscription."
-        : "No xAI SuperGrok OAuth credential found. Run /login xai and choose Use a subscription.",
-      authHint: "Uses the Pi-managed xAI OAuth login; a normal xAI API key is intentionally not used for this personal subscription meter.",
+        ? "XAI_API_KEY is a pay-per-use key with no SuperGrok limits. Run /login xai and choose Use a subscription."
+        : "Not logged in. Run /login xai and choose Use a subscription.",
       usageWindows: [],
     };
   }
@@ -269,9 +243,7 @@ export async function loadXaiRuntimeState(
   if (!accessToken) {
     return {
       state: "error",
-      implementationStatus: "implemented",
-      statusLine: "auth unavailable",
-      errorMessage: "The Pi xAI login has no usable access token. Run /login xai again.",
+      errorMessage: "The xAI login stopped working. Run /login xai again.",
       usageWindows: [],
     };
   }
@@ -282,32 +254,13 @@ export async function loadXaiRuntimeState(
     if (!usageWindow) {
       return {
         state: "error",
-        implementationStatus: "implemented",
-        statusLine: "schema mismatch",
-        errorMessage: "xAI returned billing data but no recognizable subscription usage period or percentage.",
-        authHint: "This provider relies on an undocumented Grok CLI proxy billing endpoint that may change without notice.",
+        errorMessage: "xAI sent usage in a format this version can't read.",
         usageWindows: [],
       };
     }
 
-    const usageReported = usageWindow.usedPercent != null;
     return {
       state: "ready",
-      implementationStatus: "implemented",
-      statusLine: usageReported
-        ? `${usageWindow.label.toLowerCase()} ${Math.round(usageWindow.usedPercent!)}% used`
-        : `${usageWindow.label.toLowerCase()} period active; usage not reported`,
-      description: "Live SuperGrok subscription usage for the current Pi xAI login.",
-      authHint: authSourceLabel(authStatus) ? `token: ${authSourceLabel(authStatus)}` : undefined,
-      usageHint: "Shows the shared SuperGrok usage period reported by xAI's Grok CLI proxy.",
-      notes: [
-        "Uses the undocumented Grok CLI proxy GET /user and GET /billing?format=credits endpoints.",
-        "SuperGrok usage is a shared pool across Grok products; a normal XAI_API_KEY is not a subscription quota credential.",
-        ...(usageReported
-          ? ["The progress-bar notch marks the current point in the active subscription period."]
-          : ["xAI confirmed the active subscription period but did not return a percentage for this account; no 0% value was invented."]),
-        ...productUsageNotes(response.config?.productUsage),
-      ],
       usageWindows: [usageWindow],
       lastUpdatedAt: new Date(),
     };
@@ -315,10 +268,7 @@ export async function loadXaiRuntimeState(
     const message = error instanceof Error ? error.message : String(error);
     return {
       state: "error",
-      implementationStatus: "implemented",
-      statusLine: "fetch failed",
-      errorMessage: `Failed to load xAI SuperGrok usage: ${message}`,
-      authHint: "Verify the xAI subscription login is valid, then press r to retry.",
+      errorMessage: `Couldn't load usage: ${message}`,
       usageWindows: [],
     };
   }
@@ -329,17 +279,6 @@ export const xaiProvider: SubscriptionProviderDefinition = {
   label: "xAI SuperGrok",
   shortLabel: "xAI",
   enabledByDefault: true,
-  implementationStatus: "implemented",
-  description: "Live SuperGrok subscription usage for the current Pi xAI login.",
-  authHint: "Run /login xai and choose Use a subscription. XAI_API_KEY is not used for SuperGrok quota.",
-  usageHint: "Uses an undocumented Grok CLI proxy billing endpoint for the current shared subscription period.",
-  stability: "unofficial",
-  notes: [
-    "This provider relies on undocumented Grok CLI proxy endpoints.",
-    "Usage percentage can be absent even when xAI returns an active subscription period.",
-  ],
-  usageWindows: [
-    { label: "Weekly", statusLabel: "loading…", notches: [50, 75, 90] },
-  ],
+  authHint: "Run /login xai and choose Use a subscription. An XAI_API_KEY has no SuperGrok limits to show.",
   loadRuntimeState: loadXaiRuntimeState,
 };

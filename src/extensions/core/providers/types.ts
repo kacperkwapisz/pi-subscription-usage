@@ -5,13 +5,10 @@ export type SubscriptionProviderId =
   | "github-copilot"
   | "anthropic"
   | "openrouter"
-  | "kilocode"
   | "kimi-coding"
   | "opencode"
   | "xai";
 
-export type SubscriptionProviderStability = "official" | "unofficial" | "mixed" | "unknown";
-export type SubscriptionProviderImplementationStatus = "scaffold" | "implemented";
 export type SubscriptionProviderRuntimeLoadState = "loading" | "ready" | "error";
 
 export interface SubscriptionUsageWindowDefinition {
@@ -27,23 +24,18 @@ export interface SubscriptionUsageWindowDefinition {
 /** Who an account is, when the provider reports it. */
 export interface SubscriptionAccountInfo {
   email?: string;
-  /** Human-readable plan, e.g. "Team \u00b7 Max 5x" or "Pro". */
+  /** Human-readable plan, e.g. "Team · Max 5x" or "Pro". */
   plan?: string;
   /** Stable identity used to spot the same account logged in twice. */
   identity?: string;
 }
 
+/** What one account's view shows. */
 export interface SubscriptionProviderRuntimeState {
   state: SubscriptionProviderRuntimeLoadState;
   account?: SubscriptionAccountInfo;
   /** The login works, but there is no subscription behind it to show; the tab is dropped. */
   noSubscription?: boolean;
-  implementationStatus?: SubscriptionProviderImplementationStatus;
-  statusLine?: string;
-  description?: string;
-  authHint?: string;
-  usageHint?: string;
-  notes?: string[];
   usageWindows?: SubscriptionUsageWindowDefinition[];
   errorMessage?: string;
   lastUpdatedAt?: Date;
@@ -51,16 +43,13 @@ export interface SubscriptionProviderRuntimeState {
 
 export interface SubscriptionProviderDefinition {
   id: SubscriptionProviderId;
+  /** Tab heading, e.g. "Anthropic". */
   label: string;
+  /** Tab title. */
   shortLabel: string;
   enabledByDefault: boolean;
-  implementationStatus: SubscriptionProviderImplementationStatus;
-  description: string;
+  /** How to set the provider up; shown in settings while it is not. */
   authHint: string;
-  usageHint: string;
-  stability: SubscriptionProviderStability;
-  notes: string[];
-  usageWindows: SubscriptionUsageWindowDefinition[];
   /**
    * Pi provider ids whose logins are accounts of this provider. The first is the provider's
    * own id; numbered extra accounts (`<id>-account-N`) are found for every entry.

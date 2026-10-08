@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { createSubscriptionAuthStorage, type SubscriptionAuthStatus, type SubscriptionAuthStorage } from "../auth.ts";
+import { createSubscriptionAuthStorage, type SubscriptionAuthStorage } from "../auth.ts";
 import { openAiClaim } from "../jwt.ts";
 import type {
   SubscriptionAccountInfo,
@@ -80,7 +80,6 @@ interface CodexUsageResponse {
 
 interface AccountResolution {
   accountId?: string;
-  source?: string;
 }
 
 type CodexWindowKind = "session" | "weekly";
@@ -88,7 +87,6 @@ type CodexWindowKind = "session" | "weekly";
 interface CodexWindowParseResult {
   sessionWindow?: SubscriptionUsageWindowDefinition;
   weeklyWindow?: SubscriptionUsageWindowDefinition;
-  parseNotes: string[];
 }
 
 function parseNumber(value: unknown): number | undefined {
@@ -136,46 +134,12 @@ function formatPercent(percent: number | undefined): string {
   return `${Math.round(percent ?? 0)}%`;
 }
 
-function formatWindowDuration(windowSeconds: number): string {
-  if (windowSeconds % (24 * 60 * 60) === 0) {
-    const days = Math.round(windowSeconds / (24 * 60 * 60));
-    return `${days} day${days === 1 ? "" : "s"}`;
-  }
-
-  if (windowSeconds % (60 * 60) === 0) {
-    const hours = Math.round(windowSeconds / (60 * 60));
-    return `${hours} hour${hours === 1 ? "" : "s"}`;
-  }
-
-  return `${windowSeconds} seconds`;
-}
-
 function windowKindLabel(kind: CodexWindowKind): string {
   return kind === "session" ? "Session" : "Weekly";
 }
 
 function fallbackSecondsForWindowKind(kind: CodexWindowKind): number {
   return kind === "session" ? 5 * 60 * 60 : 7 * 24 * 60 * 60;
-}
-
-function authSourceLabel(authStatus: SubscriptionAuthStatus): string | undefined {
-  if (authStatus.source === "environment") {
-    return authStatus.label ?? "environment";
-  }
-
-  if (authStatus.source === "stored") {
-    return "Pi auth.json";
-  }
-
-  if (authStatus.source === "runtime") {
-    return "runtime token";
-  }
-
-  if (authStatus.source === "fallback") {
-    return "fallback token";
-  }
-
-  return undefined;
 }
 
 const CHATGPT_PLAN_NAMES: Record<string, string> = {
@@ -216,7 +180,6 @@ function resolveCodexAccountId(authStorage: SubscriptionAuthStorage, accessToken
   if (storedAccountId) {
     return {
       accountId: storedAccountId,
-      source: "Pi auth.json",
     };
   }
 
@@ -226,7 +189,6 @@ function resolveCodexAccountId(authStorage: SubscriptionAuthStorage, accessToken
   if (typeof tokenAccountId === "string" && tokenAccountId) {
     return {
       accountId: tokenAccountId,
-      source: "access token",
     };
   }
 
@@ -239,7 +201,6 @@ function resolveCodexAccountId(authStorage: SubscriptionAuthStorage, accessToken
     if (fallbackAccountId) {
       return {
         accountId: fallbackAccountId,
-        source: "~/.codex/auth.json",
       };
     }
   } catch {
@@ -312,7 +273,7 @@ function createCodexWindow(
     const remainingSeconds = Math.max(0, Math.round((resetAt.getTime() - Date.now()) / 1000));
     const elapsedSeconds = Math.max(0, windowSeconds - remainingSeconds);
     pacePercent = clampPercent((elapsedSeconds / windowSeconds) * 100);
-    detailLabel = `${formatPercent(pacePercent)} elapsed`;
+    detailLabel = `${formatPercent(pacePercent)} of the period has passed`;
   }
 
   const reportedSeconds = parseNumber((limit as CodexUsageLimitWindow | undefined)?.limit_window_seconds);
@@ -328,45 +289,29 @@ function createCodexWindow(
 function inferCodexWindowKind(
   limit: CodexUsageLimitWindow | CodexUsageArrayLimit | undefined,
   fallbackKind: CodexWindowKind,
-  sourceLabel: string,
-): { kind: CodexWindowKind; note?: string } {
+): CodexWindowKind {
   const unit = String((limit as CodexUsageArrayLimit | undefined)?.unit ?? "");
   if (unit === "3") {
-    return { kind: "session" };
+    return "session";
   }
-
   if (unit === "6") {
-    return { kind: "weekly" };
+    return "weekly";
   }
-
   const windowSeconds = parseNumber((limit as CodexUsageLimitWindow | undefined)?.limit_window_seconds);
   if (windowSeconds != null) {
     if (windowSeconds <= 8 * 60 * 60) {
-      return {
-        kind: "session",
-        note: fallbackKind === "session"
-          ? undefined
-          : `${sourceLabel} window duration is ${formatWindowDuration(windowSeconds)}, so it is displayed as Session.`,
-      };
+      return "session";
     }
-
     if (windowSeconds >= 6 * 24 * 60 * 60) {
-      return {
-        kind: "weekly",
-        note: fallbackKind === "weekly"
-          ? undefined
-          : `${sourceLabel} window duration is ${formatWindowDuration(windowSeconds)}, so it is displayed as Weekly.`,
-      };
+      return "weekly";
     }
   }
-
-  return { kind: fallbackKind };
+  return fallbackKind;
 }
 
 function parseCodexLimitsArray(limits: unknown): CodexWindowParseResult {
-  const parseNotes: string[] = [];
   if (!Array.isArray(limits) || limits.length === 0) {
-    return { parseNotes };
+    return {};
   }
 
   const normalized = limits
@@ -376,33 +321,21 @@ function parseCodexLimitsArray(limits: unknown): CodexWindowParseResult {
   const sessionCandidate = normalized.find((limit) => String(limit.unit) === "3") ?? normalized[0];
   const weeklyCandidate = normalized.find((limit) => String(limit.unit) === "6") ?? normalized[1];
 
-  if (!normalized.find((limit) => String(limit.unit) === "3")) {
-    parseNotes.push("Session window inferred heuristically from the legacy limits array shape.");
-  }
-
-  if (!normalized.find((limit) => String(limit.unit) === "6")) {
-    parseNotes.push("Weekly window inferred heuristically from the legacy limits array shape.");
-  }
-
   return {
     sessionWindow: createCodexWindow("Session", sessionCandidate, 5 * 60 * 60),
     weeklyWindow: createCodexWindow("Weekly", weeklyCandidate, 7 * 24 * 60 * 60),
-    parseNotes,
   };
 }
 
 function parseCodexUsageWindows(response: CodexUsageResponse): CodexWindowParseResult {
   const rateLimit = response.rate_limit ?? response.rate_limits ?? {};
-  const parseNotes: string[] = [];
   const resolvedWindows: Partial<Record<CodexWindowKind, SubscriptionUsageWindowDefinition>> = {};
   const candidates = [
     {
-      sourceLabel: "Primary",
       fallbackKind: "session" as const,
       limit: rateLimit.primary_window ?? rateLimit.primary ?? rateLimit.five_hour_limit ?? rateLimit.five_hour,
     },
     {
-      sourceLabel: "Secondary",
       fallbackKind: "weekly" as const,
       limit: rateLimit.secondary_window ?? rateLimit.secondary ?? rateLimit.weekly_limit ?? rateLimit.weekly,
     },
@@ -413,19 +346,12 @@ function parseCodexUsageWindows(response: CodexUsageResponse): CodexWindowParseR
       continue;
     }
 
-    const inferred = inferCodexWindowKind(candidate.limit, candidate.fallbackKind, candidate.sourceLabel);
-    if (inferred.note) {
-      parseNotes.push(inferred.note);
-    }
-
-    let targetKind = inferred.kind;
+    let targetKind = inferCodexWindowKind(candidate.limit, candidate.fallbackKind);
     if (resolvedWindows[targetKind]) {
-      if (!resolvedWindows[candidate.fallbackKind]) {
-        targetKind = candidate.fallbackKind;
-      } else {
-        parseNotes.push(`Ignoring duplicate ${windowKindLabel(inferred.kind).toLowerCase()} window from the ${candidate.sourceLabel.toLowerCase()} slot.`);
-        continue;
+      if (resolvedWindows[candidate.fallbackKind]) {
+        continue; // a duplicate of a window already shown
       }
+      targetKind = candidate.fallbackKind;
     }
 
     const window = createCodexWindow(
@@ -443,7 +369,6 @@ function parseCodexUsageWindows(response: CodexUsageResponse): CodexWindowParseR
     return {
       sessionWindow: resolvedWindows.session,
       weeklyWindow: resolvedWindows.weekly,
-      parseNotes,
     };
   }
 
@@ -471,28 +396,16 @@ async function fetchCodexUsage(accessToken: string, accountId: string): Promise<
   return response.json() as Promise<CodexUsageResponse>;
 }
 
-function buildStatusLine(usageWindows: SubscriptionUsageWindowDefinition[]): string {
-  const parts = usageWindows
-    .filter((window) => window.usedPercent != null)
-    .map((window) => `${window.label.toLowerCase()} ${formatPercent(window.usedPercent)} used`);
-
-  return parts.join(" • ") || "live usage data";
-}
-
 export async function loadOpenAiCodexRuntimeState(
   authStorage: SubscriptionAuthStorage = createSubscriptionAuthStorage(),
 ): Promise<SubscriptionProviderRuntimeState> {
-  const authStatus = authStorage.getAuthStatus("openai-codex");
   const accessToken = await authStorage.getApiKey("openai-codex");
   const accountResolution = resolveCodexAccountId(authStorage, accessToken);
 
   if (!accessToken) {
     return {
       state: "error",
-      implementationStatus: "implemented",
-      statusLine: "auth missing",
-      errorMessage: "No OpenAI Codex bearer token found. Log in to OpenAI/Codex with /login first.",
-      authHint: "This provider uses the unofficial ChatGPT/Codex usage endpoint.",
+      errorMessage: "Not logged in. Run /login and choose OpenAI (ChatGPT subscription).",
       usageWindows: [],
     };
   }
@@ -500,17 +413,14 @@ export async function loadOpenAiCodexRuntimeState(
   if (!accountResolution.accountId) {
     return {
       state: "error",
-      implementationStatus: "implemented",
-      statusLine: "account id missing",
-      errorMessage: "No ChatGPT account ID found for Codex. Re-auth with /login or restore ~/.codex/auth.json.",
-      authHint: "Codex requires both a bearer token and ChatGPT-Account-Id.",
+      errorMessage: "Couldn't tell which ChatGPT account this login belongs to. Run /login again.",
       usageWindows: [],
     };
   }
 
   try {
     const response = await fetchCodexUsage(accessToken, accountResolution.accountId);
-    const { sessionWindow, weeklyWindow, parseNotes } = parseCodexUsageWindows(response);
+    const { sessionWindow, weeklyWindow } = parseCodexUsageWindows(response);
     const usageWindows = [sessionWindow, weeklyWindow].filter(
       (window): window is SubscriptionUsageWindowDefinition => !!window,
     );
@@ -518,73 +428,14 @@ export async function loadOpenAiCodexRuntimeState(
     if (usageWindows.length === 0) {
       return {
         state: "error",
-        implementationStatus: "implemented",
-        statusLine: "schema mismatch",
-        errorMessage: "Codex returned usage data, but no active usage windows could be parsed from the current response schema.",
-        authHint: "This provider depends on an unofficial ChatGPT/Codex usage endpoint that may change without notice.",
+        errorMessage: "ChatGPT sent usage in a format this version can't read.",
         usageWindows: [],
       };
     }
 
-    const sourceLabel = authSourceLabel(authStatus);
-    const notes = [
-      "Uses the unofficial ChatGPT/Codex GET /backend-api/wham/usage endpoint.",
-      "This endpoint reports percentage-based usage only; it does not expose absolute message or token counts.",
-      "Per OpenAI's Codex pricing docs, the underlying meter is driven by credit/token consumption, so usage can move by different amounts depending on model, context size, reasoning, tool use, caching, and cloud vs local work.",
-      "The progress-bar notch marks the current point in the active time window.",
-      ...parseNotes,
-    ];
-
-    if (response.plan_type) {
-      notes.unshift(`Plan: ${response.plan_type}`);
-    }
-
-    if (response.credits?.has_credits) {
-      const creditBalance = parseNumber(response.credits.balance);
-      if (creditBalance != null) {
-        notes.push(`Credits balance reported: ${creditBalance}`);
-      }
-    }
-
-    if (response.spend_control?.reached) {
-      notes.push("Spend control is currently marked as reached.");
-    }
-
-    const rateLimitResetCredits = parseNumber(response.rate_limit_reset_credits?.available_count);
-    if (rateLimitResetCredits != null && rateLimitResetCredits > 0) {
-      notes.push(`${rateLimitResetCredits} rate-limit reset credit(s) available.`);
-    }
-
-    if (weeklyWindow && !sessionWindow) {
-      notes.push("The current response only returned a weekly window; no separate 5-hour/session window was active in this snapshot.");
-    }
-
-    if (sessionWindow && !weeklyWindow) {
-      notes.push("The current response only returned a session-style window; no separate weekly window was active in this snapshot.");
-    }
-
-    const description = sessionWindow && weeklyWindow
-      ? "Live personal usage data for ChatGPT/Codex session and weekly limits."
-      : weeklyWindow
-        ? "Live personal weekly usage data for ChatGPT/Codex."
-        : "Live personal session usage data for ChatGPT/Codex.";
-    const usageHint = sessionWindow && weeklyWindow
-      ? "Shows the active 5-hour/session and weekly/7-day windows currently returned by the ChatGPT/Codex product API."
-      : weeklyWindow
-        ? "Shows the active weekly/7-day window currently returned by the ChatGPT/Codex product API. Some accounts may not currently expose a separate 5-hour/session window."
-        : "Shows the active session-style window currently returned by the ChatGPT/Codex product API.";
-
     return {
       state: "ready",
       account: codexAccountInfo(response, accessToken),
-      implementationStatus: "implemented",
-      statusLine: buildStatusLine(usageWindows),
-      description,
-      authHint: [sourceLabel ? `token: ${sourceLabel}` : undefined, accountResolution.source ? `account id: ${accountResolution.source}` : undefined]
-        .filter(Boolean)
-        .join(" • "),
-      usageHint,
-      notes,
       usageWindows,
       lastUpdatedAt: new Date(),
     };
@@ -592,10 +443,7 @@ export async function loadOpenAiCodexRuntimeState(
     const message = error instanceof Error ? error.message : String(error);
     return {
       state: "error",
-      implementationStatus: "implemented",
-      statusLine: "fetch failed",
-      errorMessage: `Failed to load OpenAI Codex usage: ${message}`,
-      authHint: "Verify the OpenAI/Codex login is still valid, then press r to retry.",
+      errorMessage: `Couldn't load usage: ${message}`,
       usageWindows: [],
     };
   }
@@ -605,20 +453,9 @@ export const openAiCodexProvider: SubscriptionProviderDefinition = {
   id: "openai-codex",
   // Pi 1.x "Sign in with ChatGPT" logins live on the openai provider; same usage endpoint.
   accountSources: ["openai-codex", "openai"],
-  label: "OpenAI Codex",
-  shortLabel: "OpenAI/Codex",
+  label: "ChatGPT",
+  shortLabel: "ChatGPT",
   enabledByDefault: true,
-  implementationStatus: "implemented",
-  description: "Live ChatGPT/Codex personal usage view.",
-  authHint: "Uses Pi-managed OpenAI/Codex auth plus a ChatGPT account id.",
-  usageHint: "Uses the unofficial ChatGPT/Codex usage endpoint for personal subscription-style limits and credits.",
-  stability: "mixed",
-  notes: [
-    "This provider relies on an unofficial ChatGPT/Codex endpoint.",
-    "It displays whichever active usage windows the endpoint currently returns for your account.",
-  ],
-  usageWindows: [
-    { label: "Usage", statusLabel: "loading…", notches: [25, 50, 75] },
-  ],
+  authHint: "Run /login and choose OpenAI (ChatGPT subscription).",
   loadRuntimeState: loadOpenAiCodexRuntimeState,
 };

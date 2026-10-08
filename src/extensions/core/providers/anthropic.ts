@@ -1,4 +1,4 @@
-import { createSubscriptionAuthStorage, type SubscriptionAuthStorage, type SubscriptionAuthStatus } from "../auth.ts";
+import { createSubscriptionAuthStorage, type SubscriptionAuthStorage } from "../auth.ts";
 import type {
   SubscriptionAccountInfo,
   SubscriptionProviderDefinition,
@@ -88,26 +88,6 @@ function formatCurrency(value: number, currency = "USD"): string {
 }
 
 
-function authSourceLabel(authStatus: SubscriptionAuthStatus): string | undefined {
-  if (authStatus.source === "environment") {
-    return authStatus.label ?? "environment";
-  }
-
-  if (authStatus.source === "stored") {
-    return "Pi auth.json";
-  }
-
-  if (authStatus.source === "runtime") {
-    return "runtime token";
-  }
-
-  if (authStatus.source === "fallback") {
-    return "fallback token";
-  }
-
-  return undefined;
-}
-
 function parseDateish(value: unknown): Date | undefined {
   const numeric = parseNumber(value);
   if (numeric != null) {
@@ -152,7 +132,7 @@ function createAnthropicPercentWindow(
     const remainingSeconds = Math.max(0, Math.round((resetAt.getTime() - Date.now()) / 1000));
     const elapsedSeconds = Math.max(0, windowSeconds - remainingSeconds);
     pacePercent = clampPercent((elapsedSeconds / windowSeconds) * 100);
-    detailLabel = `${formatPercent(pacePercent)} elapsed`;
+    detailLabel = `${formatPercent(pacePercent)} of the period has passed`;
   }
 
   return {
@@ -192,7 +172,7 @@ function createAnthropicExtraWindow(extra: AnthropicExtraUsage | undefined): Sub
     usedPercent,
     detailLabel: [
       `${formatCurrency(usedValue, currency)}/${formatCurrency(limitValue, currency)}`,
-      `${formatPercent(pacePercent)} elapsed`,
+      `${formatPercent(pacePercent)} of the period has passed`,
     ].join(" • "),
     resetAt,
     pacePercent,
@@ -295,24 +275,6 @@ export function parseAnthropicWindows(response: AnthropicUsageResponse): Subscri
   return windows;
 }
 
-function buildStatusLine(windows: SubscriptionUsageWindowDefinition[]): string {
-  const shortWindows = ["5h", "7d"]
-    .map((label) => windows.find((window) => window.label === label))
-    .filter((window): window is SubscriptionUsageWindowDefinition => !!window)
-    .map((window) => `${window.label} ${formatPercent(window.usedPercent)} used`);
-
-  if (shortWindows.length > 0) {
-    return shortWindows.join(" • ");
-  }
-
-  const extra = windows.find((window) => window.label.startsWith("Extra"));
-  if (extra?.usedPercent != null) {
-    return `${extra.label} ${formatPercent(extra.usedPercent)} used`;
-  }
-
-  return "live usage data";
-}
-
 export async function loadAnthropicRuntimeState(
   authStorage: SubscriptionAuthStorage = createSubscriptionAuthStorage(),
 ): Promise<SubscriptionProviderRuntimeState> {
@@ -322,10 +284,7 @@ export async function loadAnthropicRuntimeState(
   if (!accessToken) {
     return {
       state: "error",
-      implementationStatus: "implemented",
-      statusLine: "auth missing",
-      errorMessage: "No Anthropic credential found. Log in to Claude with /login first to use the personal subscription-style meter.",
-      authHint: "This provider uses Anthropic’s unofficial Claude product usage endpoint.",
+      errorMessage: "Not logged in. Run /login and choose Anthropic (Claude Pro/Max).",
       usageWindows: [],
     };
   }
@@ -340,37 +299,14 @@ export async function loadAnthropicRuntimeState(
     if (usageWindows.length === 0) {
       return {
         state: "error",
-        implementationStatus: "implemented",
-        statusLine: "schema mismatch",
-        errorMessage: "Anthropic returned usage data, but no recognizable 5h/7d usage windows could be parsed from the current response schema.",
-        authHint: "This provider depends on an unofficial Claude product usage endpoint that may change without notice.",
+        errorMessage: "Claude sent usage in a format this version can't read.",
         usageWindows: [],
       };
-    }
-
-    const notes = [
-      "Uses the unofficial Claude GET /api/oauth/usage endpoint.",
-      "The progress-bar notch marks the current point in the active time window.",
-      "Anthropic currently exposes percentage-based usage windows here, not absolute message/token limits.",
-    ];
-
-    if (usageWindows.some((window) => window.label.startsWith("7d "))) {
-      notes.push("Model-specific weekly windows are shown when Claude returns them.");
-    }
-
-    if (usageWindows.some((window) => window.label.startsWith("Extra"))) {
-      notes.push("Extra usage is shown as a monthly currency budget when enabled on the account.");
     }
 
     return {
       state: "ready",
       account: anthropicAccountInfo(profile),
-      implementationStatus: "implemented",
-      statusLine: buildStatusLine(usageWindows),
-      description: "Live personal Claude usage windows for the current account.",
-      authHint: authSourceLabel(authStatus) ? `token: ${authSourceLabel(authStatus)}` : undefined,
-      usageHint: "Shows the current 5-hour and 7-day Claude usage windows returned by the Claude product API.",
-      notes,
       usageWindows,
       lastUpdatedAt: new Date(),
     };
@@ -381,14 +317,9 @@ export async function loadAnthropicRuntimeState(
 
     return {
       state: "error",
-      implementationStatus: "implemented",
-      statusLine: "fetch failed",
       errorMessage: apiKeyMismatch
-        ? "The configured Anthropic credential appears to be an API key (ANTHROPIC_API_KEY). Claude personal usage windows require a Claude OAuth token from /login."
-        : `Failed to load Anthropic usage: ${message}`,
-      authHint: apiKeyMismatch
-        ? "Official Anthropic API keys are valid for admin/API usage, but this personal meter needs Claude product auth."
-        : "Verify the Anthropic/Claude login is still valid, then press r to retry.",
+        ? "This is an API key (ANTHROPIC_API_KEY), which has no usage limits to show. Run /login and choose Anthropic (Claude Pro/Max)."
+        : `Couldn't load usage: ${message}`,
       usageWindows: [],
     };
   }
@@ -399,20 +330,6 @@ export const anthropicProvider: SubscriptionProviderDefinition = {
   label: "Anthropic",
   shortLabel: "Anthropic",
   enabledByDefault: true,
-  implementationStatus: "implemented",
-  description: "Live Claude personal usage windows for the current account.",
-  authHint: "Uses Pi-managed Claude auth. A normal ANTHROPIC_API_KEY is not enough for the personal subscription-style meter.",
-  usageHint: "Uses the unofficial Claude product usage endpoint for personal 5h / 7d windows.",
-  stability: "mixed",
-  notes: [
-    "This provider relies on an unofficial Claude product usage endpoint.",
-    "The current implementation focuses on personal 5h and 7d windows first.",
-  ],
-  usageWindows: [
-    { label: "5h", statusLabel: "loading…", notches: [25, 50, 75] },
-    { label: "7d", statusLabel: "loading…", notches: [25, 50, 75] },
-    { label: "7d Sonnet", statusLabel: "loading…", notches: [25, 50, 75] },
-    { label: "Extra", statusLabel: "loading…", notches: [50, 75, 90] },
-  ],
+  authHint: "Run /login and choose Anthropic (Claude Pro/Max). An API key has no usage limits to show.",
   loadRuntimeState: loadAnthropicRuntimeState,
 };

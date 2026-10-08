@@ -61,25 +61,28 @@ export class ProviderSettingsDialog {
     const items: SettingItem[] = [
       {
         id: DISPLAY_MODE_SETTING_ID,
-        label: "Display mode",
+        label: "Bars show",
+        description: "How much of each limit is used, or how much is left.",
         currentValue: this.displayMode,
         values: ["used", "remaining"],
       },
       {
         id: RESET_TIME_DISPLAY_MODE_SETTING_ID,
-        label: "Reset time",
+        label: "Reset times",
+        description: "Relative (in 2h 14m) or absolute (Oct 9, 21:50).",
         currentValue: this.resetTimeDisplayMode,
         values: ["relative", "absolute"],
       },
       {
         id: THRESHOLD_NOTCHES_SETTING_ID,
-        label: "50/75 marks",
+        label: "Marks at 50% and 75%",
         currentValue: this.showThresholdNotches ? "shown" : "hidden",
         values: ["shown", "hidden"],
       },
       {
         id: NOW_NOTCH_SETTING_ID,
-        label: "Now mark",
+        label: "Time marker",
+        description: "Marks how far through the period you are, to compare with your usage.",
         currentValue: this.showNowNotch ? "shown" : "hidden",
         values: ["shown", "hidden"],
       },
@@ -102,10 +105,7 @@ export class ProviderSettingsDialog {
 
     this.container = new Container();
     this.container.addChild(new DynamicBorder((text) => options.theme.fg("accent", text)));
-    this.container.addChild(new Text(options.theme.fg("accent", options.theme.bold("Subscription Settings"))));
-    this.container.addChild(
-      new Text(options.theme.fg("muted", "Choose bar semantics, reset-time format, notch visibility, and which provider tabs appear.")),
-    );
+    this.container.addChild(new Text(options.theme.fg("accent", options.theme.bold("Usage settings"))));
 
     this.settingsList = new SettingsList(
       items,
@@ -150,7 +150,7 @@ export class ProviderSettingsDialog {
 
     this.container.addChild(this.settingsList);
     this.container.addChild(
-      new Text(options.theme.fg("dim", "↑↓ navigate • / search • esc close")),
+      new Text(options.theme.fg("dim", "↑↓ move • Enter change • / search • Esc close")),
     );
     this.container.addChild(new DynamicBorder((text) => options.theme.fg("accent", text)));
   }
