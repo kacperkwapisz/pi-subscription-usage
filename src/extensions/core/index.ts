@@ -1,7 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { OverlayHandle } from "@earendil-works/pi-tui";
-import { discoverAccounts } from "./accounts.ts";
+import { discoverAccounts, type SubscriptionAccount } from "./accounts.ts";
 import { createSubscriptionAuthStorage, readStoredCredentials, scopeAuthStorage } from "./auth.ts";
+import { connectMultiAccount } from "./multi-account.ts";
 import { createDefaultSubscriptionProviderRegistry, type SubscriptionProviderId } from "./providers/index.ts";
 import { loadSubscriptionMeterSettings, saveSubscriptionMeterSettings } from "./settings.ts";
 import { ProviderSettingsDialog } from "./ui/provider-settings-dialog.ts";
@@ -43,6 +44,9 @@ export default function (pi: ExtensionAPI) {
       providerRegistry.setEnabledProviders(currentSettings.enabledProviders);
 
       let dialog: SubscriptionsDialog | undefined;
+      // With pi-multi-account loaded, Enter on an account switches to it (after the overlay closes).
+      const multiAccount = connectMultiAccount(pi.events);
+      let accountToUse: SubscriptionAccount | undefined;
       let settingsOverlayOpen = false;
 
       void ctx.ui.custom<void>((tui, theme, _keybindings, done) => {
@@ -168,6 +172,12 @@ export default function (pi: ExtensionAPI) {
             return provider.loadRuntimeState(scopeAuthStorage(auth, account.sourceId, account.providerId));
           },
           currentProviderId: ctx.model?.provider,
+          onUseAccount: multiAccount
+            ? (account) => {
+                accountToUse = account;
+                done(undefined);
+              }
+            : undefined,
           displayMode: currentSettings.displayMode,
           resetTimeDisplayMode: currentSettings.resetTimeDisplayMode,
           showThresholdNotches: currentSettings.showThresholdNotches,
@@ -211,6 +221,9 @@ export default function (pi: ExtensionAPI) {
           dialog?.dispose();
           subscriptionsOverlayHandle = null;
           closeSubscriptionsOverlay = null;
+          if (accountToUse && multiAccount) {
+            void multiAccount.useAccount(accountToUse.providerId, ctx);
+          }
         });
 
     },

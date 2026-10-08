@@ -36,6 +36,10 @@ extra accounts (`anthropic-account-2`, …), as created by
 Pi's **Sign in with ChatGPT** (`openai`) appear in the OpenAI/Codex tab. The same account
 logged in twice is marked as such.
 
+With pi-multi-account installed, **↑↓ selects an account and Enter switches to it**, keeping
+your model when that account offers it. Without it, the view is read-only. The two extensions
+find each other over Pi's `pi.events` bus; neither depends on the other.
+
 Tokens come from Pi, so expired logins are refreshed by Pi exactly as for normal requests.
 
 ## Data sources

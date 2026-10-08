@@ -38,7 +38,11 @@ const ready = (email: string, identity: string, used: number): SubscriptionProvi
   ],
 });
 
-async function openDialog(options: { displayMode: "used" | "remaining"; accounts: SubscriptionAccount[] }) {
+async function openDialog(options: {
+  displayMode: "used" | "remaining";
+  accounts: SubscriptionAccount[];
+  onUseAccount?: (account: SubscriptionAccount) => void;
+}) {
   const states: Record<string, SubscriptionProviderRuntimeState> = {
     anthropic: ready("kacper@example.com", "anthropic:a", 27),
     "anthropic-account-2": ready("kacper@example.com", "anthropic:a", 27),
@@ -52,6 +56,7 @@ async function openDialog(options: { displayMode: "used" | "remaining"; accounts
     loadAccounts: (p) => (p.id === "anthropic" ? options.accounts : [account("xai", 1)]),
     loadAccountState: async (_p, a) => states[a.providerId]!,
     currentProviderId: "anthropic",
+    onUseAccount: options.onUseAccount,
     displayMode: options.displayMode,
     resetTimeDisplayMode: "relative",
     showThresholdNotches: false,
@@ -101,3 +106,33 @@ test("a single account keeps the original full layout", async () => {
   assert.match(text, /kacper@example\.com · Team · Max 5x/);
   assert.doesNotMatch(text, /Account 1/);
 });
+
+test("with pi-multi-account, arrows pick an account and Enter switches to it", async () => {
+  const used: string[] = [];
+  const accounts = [account("anthropic", 1), account("anthropic-account-2", 2), account("anthropic-account-3", 3)];
+  const dialog = await openDialog({ displayMode: "remaining", accounts, onUseAccount: (a) => used.push(a.providerId) });
+
+  let text = dialog.render(100).join("\n");
+  assert.match(text, />● Account 1 · kacper@example\.com/, "starts on the account in use");
+  assert.match(text, /↑↓ select • Enter use account/);
+
+  dialog.handleInput("\x1b[B");
+  dialog.handleInput("\x1b[B");
+  text = dialog.render(100).join("\n");
+  assert.match(text, />  Account 3 · nadia@example\.com/);
+  dialog.handleInput("\r");
+  dialog.handleInput("\x1b[A");
+  dialog.handleInput("\r");
+  assert.deepEqual(used, ["anthropic-account-3", "anthropic-account-2"]);
+});
+
+test("without pi-multi-account the view stays read-only", async () => {
+  const accounts = [account("anthropic", 1), account("anthropic-account-3", 3)];
+  const dialog = await openDialog({ displayMode: "remaining", accounts });
+  dialog.handleInput("\x1b[B");
+  dialog.handleInput("\r");
+  const text = dialog.render(100).join("\n");
+  assert.doesNotMatch(text, /Enter use account/);
+  assert.doesNotMatch(text, /^.{3}>/m, "no selection pointer");
+});
+

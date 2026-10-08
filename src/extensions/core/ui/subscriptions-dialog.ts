@@ -20,6 +20,8 @@ interface SubscriptionsDialogOptions {
   ) => Promise<SubscriptionProviderRuntimeState>;
   /** Pi provider id of the session's current model, marked "in use". */
   currentProviderId?: string;
+  /** Present when accounts can be switched (pi-multi-account is loaded). */
+  onUseAccount?: (account: SubscriptionAccount) => void;
   displayMode: SubscriptionUsageDisplayMode;
   resetTimeDisplayMode: SubscriptionResetTimeDisplayMode;
   showThresholdNotches: boolean;
@@ -119,6 +121,8 @@ export class SubscriptionsDialog {
   private readonly loadAccounts: (provider: SubscriptionProviderDefinition) => SubscriptionAccount[];
   private readonly loadAccountState: SubscriptionsDialogOptions["loadAccountState"];
   private readonly currentProviderId?: string;
+  private readonly onUseAccount?: (account: SubscriptionAccount) => void;
+  private readonly selectedAccount = new Map<SubscriptionProviderId, number>();
   private displayMode: SubscriptionUsageDisplayMode;
   private resetTimeDisplayMode: SubscriptionResetTimeDisplayMode;
   private showThresholdNotches: boolean;
@@ -140,6 +144,7 @@ export class SubscriptionsDialog {
     this.loadAccounts = options.loadAccounts;
     this.loadAccountState = options.loadAccountState;
     this.currentProviderId = options.currentProviderId;
+    this.onUseAccount = options.onUseAccount;
     this.displayMode = options.displayMode;
     this.resetTimeDisplayMode = options.resetTimeDisplayMode;
     this.showThresholdNotches = options.showThresholdNotches;
@@ -213,6 +218,10 @@ export class SubscriptionsDialog {
       return;
     }
 
+    if (this.handleAccountInput(data)) {
+      return;
+    }
+
     if (matchesKey(data, Key.tab) || matchesKey(data, Key.right)) {
       this.activeIndex = (this.activeIndex + 1) % this.providers.length;
     } else if (matchesKey(data, Key.shift("tab")) || matchesKey(data, Key.left)) {
@@ -226,6 +235,41 @@ export class SubscriptionsDialog {
     }
     this.invalidate();
     this.ensureActiveProviderLoaded();
+  }
+
+  /** ↑↓ select an account and Enter switches to it, when switching is available. */
+  private handleAccountInput(data: string): boolean {
+    const provider = this.providers[this.activeIndex];
+    if (!provider || !this.onUseAccount) {
+      return false;
+    }
+    const accounts = this.accountsOf(provider);
+    if (accounts.length < 2) {
+      return false;
+    }
+    const index = this.selectedIndex(provider, accounts);
+    if (matchesKey(data, Key.up) || matchesKey(data, Key.down)) {
+      const step = matchesKey(data, Key.up) ? -1 : 1;
+      this.selectedAccount.set(provider.id, (index + step + accounts.length) % accounts.length);
+      this.invalidate();
+      return true;
+    }
+    if (matchesKey(data, Key.enter)) {
+      const account = accounts[index];
+      if (account) {
+        this.onUseAccount(account);
+      }
+      return true;
+    }
+    return false;
+  }
+
+  private selectedIndex(provider: SubscriptionProviderDefinition, accounts: SubscriptionAccount[]): number {
+    const chosen = this.selectedAccount.get(provider.id);
+    if (chosen !== undefined && chosen < accounts.length) {
+      return chosen;
+    }
+    return Math.max(0, accounts.findIndex((account) => account.providerId === this.currentProviderId));
   }
 
   private accountsOf(provider: SubscriptionProviderDefinition, reload = false): SubscriptionAccount[] {
@@ -541,9 +585,10 @@ export class SubscriptionsDialog {
         addBlankLine();
 
         const firstWithIdentity = new Map<string, string>();
+        const selected = this.onUseAccount ? this.selectedIndex(activeProvider, accounts) : -1;
         const barWidth = contentWidth >= 80 ? 24 : contentWidth >= 56 ? 16 : 10;
 
-        for (const account of accounts) {
+        for (const [accountIndex, account] of accounts.entries()) {
           const runtimeState = this.stateOf(activeProvider, account);
           const identity = runtimeState?.account?.identity;
           const sameAs = identity ? firstWithIdentity.get(identity) : undefined;
@@ -558,8 +603,9 @@ export class SubscriptionsDialog {
             : inUse
               ? this.theme.fg("accent", "in use")
               : "";
+          const pointer = accountIndex === selected ? this.theme.fg("accent", ">") : selected >= 0 ? " " : "";
           addCompactLine(
-            `${inUse ? this.theme.fg("accent", "● ") : "  "}${this.theme.fg("accent", this.theme.bold(name))}`,
+            `${pointer}${inUse ? this.theme.fg("accent", "● ") : "  "}${this.theme.fg("accent", this.theme.bold(name))}`,
             badge,
           );
 
@@ -600,7 +646,13 @@ export class SubscriptionsDialog {
     }
 
     addWrappedBlock(this.theme.fg("dim", "/subscriptions close • s settings"));
-    addContentLine(this.theme.fg("dim", "Tab/←→ switch • r refresh • Esc close"));
+    const canSwitch = this.onUseAccount !== undefined
+      && this.providers[this.activeIndex] !== undefined
+      && this.accountsOf(this.providers[this.activeIndex]!).length > 1;
+    addContentLine(this.theme.fg(
+      "dim",
+      canSwitch ? "Tab/←→ switch • ↑↓ select • Enter use account • r refresh • Esc close" : "Tab/←→ switch • r refresh • Esc close",
+    ));
     addBorder("└", "─", "┘");
 
     this.cachedWidth = width;
