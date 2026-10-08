@@ -1,0 +1,59 @@
+{
+  "name": "pi-subscription-usage",
+  "version": "0.1.0",
+  "description": "Subscription usage for every account of every provider in Pi: Claude, ChatGPT, Copilot, OpenRouter, xAI, Kimi and OpenCode.",
+  "type": "module",
+  "private": false,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kacperkwapisz/pi-subscription-usage.git"
+  },
+  "homepage": "https://github.com/kacperkwapisz/pi-subscription-usage#readme",
+  "bugs": {
+    "url": "https://github.com/kacperkwapisz/pi-subscription-usage/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi",
+    "quotas",
+    "usage",
+    "subscriptions",
+    "anthropic",
+    "openai",
+    "openrouter",
+    "opencode",
+    "github-copilot",
+    "multi-account"
+  ],
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --test test/*.test.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./src/extensions/core/index.ts"
+    ]
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@earendil-works/pi-tui": "1.1.0",
+    "@types/node": "^22.19.0",
+    "typescript": "^5.9.0"
+  },
+  "author": "Kacper Kwapisz"
+}
