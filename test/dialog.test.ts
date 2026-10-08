@@ -90,6 +90,7 @@ test("several accounts: one section each, with who they are, usage on one line, 
 
   assert.ok(lines.every((line) => visibleWidth(line) <= width), "fits the terminal");
   assert.match(text, / Anthropic \(3\) /, "tab shows the account count");
+  assert.doesNotMatch(text, /implemented|source/, "no developer metadata");
   assert.match(text, /● Account 1 · kacper@example\.com · Team · Max 5x +in use/);
   assert.match(text, /Account 2 · kacper@example\.com · Team · Max 5x +same account as Account 1/);
   assert.match(text, /Account 3 · nadia@example\.com/);
@@ -110,6 +111,7 @@ test("a single account keeps the original full layout", async () => {
   assert.match(text, / Anthropic  /, "no account count on the tab");
   assert.match(text, /kacper@example\.com · Team · Max 5x/);
   assert.doesNotMatch(text, /Account 1/);
+  assert.doesNotMatch(text, /implemented|source/, "no developer metadata");
 });
 
 test("with pi-multi-account, arrows pick an account and Enter switches to it", async () => {

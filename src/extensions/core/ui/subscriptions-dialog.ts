@@ -461,23 +461,6 @@ export class SubscriptionsDialog {
       return "success";
     };
 
-    const formatStatusLine = (provider: SubscriptionProviderDefinition, runtimeState?: SubscriptionProviderRuntimeState) => {
-      const parts = [runtimeState?.implementationStatus ?? provider.implementationStatus, `${provider.stability} source`];
-
-      if (runtimeState?.state === "loading") {
-        parts.push(runtimeState.statusLine ?? "loading live data");
-      } else if (runtimeState?.state === "ready") {
-        parts.push(runtimeState.statusLine ?? "live data");
-      } else if (runtimeState?.state === "error") {
-        parts.push(runtimeState.statusLine ?? "live fetch failed");
-      } else if (provider.loadRuntimeState) {
-        parts.push("live fetch available");
-      } else {
-        parts.push("live fetch pending");
-      }
-
-      return parts.join(" • ");
-    };
 
     const getUsageWindows = (
       provider: SubscriptionProviderDefinition,
@@ -562,7 +545,6 @@ export class SubscriptionsDialog {
         const usageWindows = getUsageWindows(activeProvider, runtimeState);
 
         addWrappedBlock(this.theme.fg("accent", this.theme.bold(activeProvider.label)));
-        addWrappedBlock(this.theme.fg("muted", formatStatusLine(activeProvider, runtimeState)));
         const who = [runtimeState?.account?.email, runtimeState?.account?.plan].filter(Boolean).join(" · ");
         if (who) {
           addWrappedBlock(this.theme.fg("muted", who));
@@ -617,7 +599,6 @@ export class SubscriptionsDialog {
       } else {
         // Several accounts: one compact section each, one line per usage window.
         addWrappedBlock(this.theme.fg("accent", this.theme.bold(activeProvider.label)));
-        addWrappedBlock(this.theme.fg("muted", `${accounts.length} accounts • ${activeProvider.stability} source`));
         addBlankLine();
 
         const firstWithIdentity = new Map<string, string>();

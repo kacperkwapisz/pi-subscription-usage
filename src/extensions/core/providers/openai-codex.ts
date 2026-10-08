@@ -283,6 +283,16 @@ function parseWindowSeconds(limit: CodexUsageLimitWindow | CodexUsageArrayLimit 
   return Math.max(1, parseNumber((limit as CodexUsageLimitWindow | undefined)?.limit_window_seconds) ?? fallbackSeconds);
 }
 
+/** Names a window by its real length, e.g. a 30-day window is "Monthly", not "Weekly". */
+export function labelForWindowSeconds(seconds: number, fallback: string): string {
+  const day = 24 * 60 * 60;
+  if (seconds <= 8 * 60 * 60) return "Session";
+  if (seconds >= 6 * day && seconds <= 8 * day) return "Weekly";
+  if (seconds >= 28 * day && seconds <= 31 * day) return "Monthly";
+  if (seconds >= day) return `${Math.round(seconds / day)}-day`;
+  return fallback;
+}
+
 function createCodexWindow(
   label: string,
   limit: CodexUsageLimitWindow | CodexUsageArrayLimit | undefined,
@@ -305,8 +315,9 @@ function createCodexWindow(
     detailLabel = `${formatPercent(pacePercent)} elapsed`;
   }
 
+  const reportedSeconds = parseNumber((limit as CodexUsageLimitWindow | undefined)?.limit_window_seconds);
   return {
-    label,
+    label: reportedSeconds != null ? labelForWindowSeconds(reportedSeconds, label) : label,
     usedPercent,
     detailLabel,
     resetAt,

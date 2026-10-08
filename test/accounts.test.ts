@@ -128,3 +128,12 @@ test("ChatGPT: an account's own token names its account id, never the Codex CLI'
   assert.equal(state.state, "ready");
   assert.deepEqual(state.account, { email: "two@example.com", plan: "Plus", identity: "chatgpt:user-2__acct-2" });
 });
+
+test("ChatGPT windows are named by their real length", async () => {
+  const { labelForWindowSeconds } = await import("../src/extensions/core/providers/openai-codex.ts");
+  const day = 86_400;
+  assert.equal(labelForWindowSeconds(5 * 3600, "Weekly"), "Session");
+  assert.equal(labelForWindowSeconds(7 * day, "Session"), "Weekly");
+  assert.equal(labelForWindowSeconds(30 * day, "Weekly"), "Monthly", "a Free plan's 30-day window");
+  assert.equal(labelForWindowSeconds(10 * day, "Weekly"), "10-day");
+});
