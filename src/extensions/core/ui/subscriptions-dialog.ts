@@ -8,6 +8,7 @@ import type {
 } from "../providers/index.ts";
 import type { SubscriptionAccount } from "../accounts.ts";
 import type { SubscriptionResetTimeDisplayMode, SubscriptionUsageDisplayMode } from "../settings.ts";
+import { describeStatus, type ServiceStatusResult } from "../service-status.ts";
 import { renderProgressBar } from "./progress-bar.ts";
 
 interface SubscriptionsDialogOptions {
@@ -22,6 +23,8 @@ interface SubscriptionsDialogOptions {
   currentProviderId?: string;
   /** Present when accounts can be switched (pi-multi-account is loaded). */
   onUseAccount?: (account: SubscriptionAccount) => void;
+  /** Reads a provider's status page (providers with `statusPage`); `fresh` skips the cache. */
+  readStatus?: (provider: SubscriptionProviderDefinition, fresh: boolean) => Promise<ServiceStatusResult>;
   /** Called when a provider's tab is dropped because none of its logins has a subscription. */
   onNoSubscription?: (provider: SubscriptionProviderDefinition) => void;
   displayMode: SubscriptionUsageDisplayMode;
@@ -110,6 +113,8 @@ export class SubscriptionsDialog {
   private readonly currentProviderId?: string;
   private readonly onUseAccount?: (account: SubscriptionAccount) => void;
   private readonly onNoSubscription?: (provider: SubscriptionProviderDefinition) => void;
+  private readonly readStatus?: SubscriptionsDialogOptions["readStatus"];
+  private readonly statuses = new Map<SubscriptionProviderId, ServiceStatusResult | "loading">();
   private readonly selectedAccount = new Map<SubscriptionProviderId, number>();
   private displayMode: SubscriptionUsageDisplayMode;
   private resetTimeDisplayMode: SubscriptionResetTimeDisplayMode;
@@ -135,6 +140,7 @@ export class SubscriptionsDialog {
     this.currentProviderId = options.currentProviderId;
     this.onUseAccount = options.onUseAccount;
     this.onNoSubscription = options.onNoSubscription;
+    this.readStatus = options.readStatus;
     this.displayMode = options.displayMode;
     this.resetTimeDisplayMode = options.resetTimeDisplayMode;
     this.showThresholdNotches = options.showThresholdNotches;
@@ -319,6 +325,7 @@ export class SubscriptionsDialog {
     if (!provider.loadRuntimeState) {
       return;
     }
+    this.ensureStatusLoaded(provider, force);
 
     for (const account of this.accountsOf(provider, force)) {
       const key = this.stateKey(provider, account);
@@ -347,6 +354,47 @@ export class SubscriptionsDialog {
 
     this.invalidate();
     this.requestRender();
+  }
+
+  private ensureStatusLoaded(provider: SubscriptionProviderDefinition, force: boolean): void {
+    if (!this.readStatus || !provider.statusPage) {
+      return;
+    }
+    const current = this.statuses.get(provider.id);
+    if (current === "loading" || (current && !force)) {
+      return;
+    }
+    this.statuses.set(provider.id, "loading");
+    void this.readStatus(provider, force)
+      .catch((error: unknown): ServiceStatusResult => ({
+        ok: false,
+        page: provider.statusPage!,
+        error: error instanceof Error ? error.message : String(error),
+      }))
+      .then((result) => {
+        this.statuses.set(provider.id, result);
+        this.invalidate();
+        this.requestRender();
+      });
+  }
+
+  /** The status page line under the tabs: green when all is well, warning or error colours otherwise. */
+  private statusLine(provider: SubscriptionProviderDefinition): string | undefined {
+    const status = this.statuses.get(provider.id);
+    if (!provider.statusPage || !this.readStatus || !status) {
+      return undefined;
+    }
+    if (status === "loading") {
+      return this.theme.fg("dim", `Checking ${provider.statusPage}…`);
+    }
+    if (!status.ok) {
+      return this.theme.fg("dim", describeStatus(status));
+    }
+    const level = status.status.level;
+    const color: Parameters<Theme["fg"]>[0] =
+      level === "operational" ? "success" : level === "major" || level === "critical" ? "error" : "warning";
+    const dot = this.theme.fg(color, "●");
+    return `${dot} ${this.theme.fg(level === "operational" ? "dim" : color, describeStatus(status))}`;
   }
 
   /** Drops a tab once every one of its accounts has loaded and none has a subscription. */
@@ -489,6 +537,12 @@ export class SubscriptionsDialog {
 
       const activeProvider = this.providers[this.activeIndex]!;
       const accounts = this.accountsOf(activeProvider);
+
+      const status = this.statusLine(activeProvider);
+      if (status) {
+        addWrappedBlock(status);
+        addBlankLine();
+      }
 
       if (accounts.length <= 1) {
         // One account: the full single-provider layout.

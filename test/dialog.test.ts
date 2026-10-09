@@ -44,6 +44,7 @@ async function openDialog(options: {
   providers?: SubscriptionProviderDefinition[];
   states?: Record<string, SubscriptionProviderRuntimeState>;
   onNoSubscription?: (provider: SubscriptionProviderDefinition) => void;
+  readStatus?: ConstructorParameters<typeof SubscriptionsDialog>[0]["readStatus"];
 }) {
   const states: Record<string, SubscriptionProviderRuntimeState> = {
     anthropic: ready("kacper@example.com", "anthropic:a", 27),
@@ -59,6 +60,7 @@ async function openDialog(options: {
     currentProviderId: "anthropic",
     onUseAccount: options.onUseAccount,
     onNoSubscription: options.onNoSubscription,
+    readStatus: options.readStatus,
     displayMode: options.displayMode,
     resetTimeDisplayMode: "relative",
     showThresholdNotches: false,
@@ -174,3 +176,20 @@ test("a tab stays when at least one of its accounts has a subscription", async (
   assert.match(dialog.render(100).join("\n"), / Anthropic \(2\) /);
 });
 
+
+test("the provider's status page shows under the tabs", async () => {
+  const { parseSummary } = await import("../src/extensions/core/service-status.ts");
+  const anthropic = { ...provider("anthropic", "Anthropic"), statusPage: "status.claude.com" };
+  const degraded = parseSummary("status.claude.com", {
+    status: { indicator: "minor", description: "Partially Degraded Service" },
+    incidents: [{ name: "Opus errors", status: "investigating", impact: "major" }],
+  });
+  const view = async (result: Awaited<ReturnType<NonNullable<Parameters<typeof openDialog>[0]["readStatus"]>>>) =>
+    (await openDialog({ displayMode: "used", accounts: [account("anthropic", 1)], providers: [anthropic], readStatus: async () => result }))
+      .render(100)
+      .join("\n");
+
+  assert.match(await view({ ok: true, status: degraded }), /● status\.claude\.com: Partially Degraded Service\. Opus errors \(investigating\)/);
+  assert.match(await view({ ok: true, status: parseSummary("status.claude.com", { status: { indicator: "none" } }) }), /● status\.claude\.com: All systems operational/);
+  assert.match(await view({ ok: false, page: "status.claude.com", error: "timeout" }), /Couldn't check status\.claude\.com/);
+});

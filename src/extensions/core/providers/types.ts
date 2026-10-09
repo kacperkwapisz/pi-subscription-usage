@@ -62,6 +62,8 @@ export interface SubscriptionProviderDefinition {
    * subscription (OAuth) login for the provider or one of its accounts.
    */
   isSetUp?: (stored: Record<string, unknown>) => boolean;
+  /** The provider's public status page host (Statuspage), e.g. "status.claude.com". */
+  statusPage?: string;
   /** Loads one account. Without `auth`, the provider's own Pi login is used. */
   loadRuntimeState?: (auth?: SubscriptionAuthStorage) => Promise<SubscriptionProviderRuntimeState>;
 }

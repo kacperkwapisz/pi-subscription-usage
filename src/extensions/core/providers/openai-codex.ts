@@ -457,5 +457,6 @@ export const openAiCodexProvider: SubscriptionProviderDefinition = {
   shortLabel: "ChatGPT",
   enabledByDefault: true,
   authHint: "Run /login and choose OpenAI (ChatGPT subscription).",
+  statusPage: "status.openai.com",
   loadRuntimeState: loadOpenAiCodexRuntimeState,
 };

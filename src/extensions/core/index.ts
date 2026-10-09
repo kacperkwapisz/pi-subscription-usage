@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { OverlayHandle } from "@earendil-works/pi-tui";
-import { discoverAccounts, type SubscriptionAccount } from "./accounts.ts";
+import { accountNumber, discoverAccounts, type SubscriptionAccount } from "./accounts.ts";
 import { createSubscriptionAuthStorage, readStoredCredentials, scopeAuthStorage } from "./auth.ts";
 import { connectMultiAccount } from "./multi-account.ts";
 import { isProviderSetUp } from "./setup.ts";
@@ -9,12 +9,39 @@ import {
   type SubscriptionProviderDefinition,
   type SubscriptionProviderId,
 } from "./providers/index.ts";
+import { ServiceStatusReader, type ServiceStatusResult } from "./service-status.ts";
 import { loadSubscriptionMeterSettings, saveSubscriptionMeterSettings } from "./settings.ts";
 import { ProviderSettingsDialog } from "./ui/provider-settings-dialog.ts";
 import { SubscriptionsDialog } from "./ui/subscriptions-dialog.ts";
 
+/**
+ * For other extensions, over pi.events: emit with `{ provider, reply }`, where `provider` is a Pi
+ * provider id such as "anthropic" or "anthropic-account-3". `reply` is called once with the
+ * provider's status page result (see service-status.ts), or with undefined when it has none.
+ */
+export const STATUS_EVENT = "pi-subscription-usage:status";
+
+/** The provider definition a Pi provider id (or one of its numbered accounts) belongs to. */
+export function providerForPiId(providers: SubscriptionProviderDefinition[], piProviderId: string): SubscriptionProviderDefinition | undefined {
+  return providers.find((provider) =>
+    (provider.accountSources?.length ? provider.accountSources : [provider.id]).some((source) => accountNumber(piProviderId, source) !== undefined),
+  );
+}
+
 export default function (pi: ExtensionAPI) {
   const providerRegistry = createDefaultSubscriptionProviderRegistry();
+  const statusReader = new ServiceStatusReader();
+
+  pi.events.on(STATUS_EVENT, (data) => {
+    const { provider: piProviderId, reply } = (data ?? {}) as { provider?: unknown; reply?: unknown };
+    if (typeof reply !== "function") return;
+    const provider = typeof piProviderId === "string" ? providerForPiId(providerRegistry.getAllProviders(), piProviderId) : undefined;
+    if (!provider?.statusPage) {
+      reply(undefined);
+      return;
+    }
+    void statusReader.read(provider.statusPage).then((result: ServiceStatusResult) => reply(result));
+  });
   // Providers whose logins turned out to have no subscription; hidden for the rest of the session.
   const withoutSubscription = new Set<SubscriptionProviderId>();
   let subscriptionsOverlayHandle: OverlayHandle | null = null;
@@ -185,6 +212,7 @@ export default function (pi: ExtensionAPI) {
             return provider.loadRuntimeState(scopeAuthStorage(auth, account.sourceId, account.providerId));
           },
           currentProviderId: ctx.model?.provider,
+          readStatus: (provider, fresh) => statusReader.read(provider.statusPage!, { fresh }),
           onUseAccount: multiAccount
             ? (account) => {
                 accountToUse = account;

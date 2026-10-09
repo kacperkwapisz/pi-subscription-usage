@@ -331,5 +331,6 @@ export const anthropicProvider: SubscriptionProviderDefinition = {
   shortLabel: "Anthropic",
   enabledByDefault: true,
   authHint: "Run /login and choose Anthropic (Claude Pro/Max). An API key has no usage limits to show.",
+  statusPage: "status.claude.com",
   loadRuntimeState: loadAnthropicRuntimeState,
 };
