@@ -15,8 +15,9 @@ import { ProviderSettingsDialog } from "./ui/provider-settings-dialog.ts";
 import { SubscriptionsDialog } from "./ui/subscriptions-dialog.ts";
 
 /**
- * For other extensions, over pi.events: emit with `{ provider, reply }`, where `provider` is a Pi
- * provider id such as "anthropic" or "anthropic-account-3". `reply` is called once with the
+ * For other extensions, over pi.events: emit with `{ provider, reply, accept? }`, where
+ * `provider` is a Pi provider id such as "anthropic" or "anthropic-account-3". `accept` is
+ * called during emit, so the asker knows a reply is coming; `reply` is called once with the
  * provider's status page result (see service-status.ts), or with undefined when it has none.
  */
 export const STATUS_EVENT = "pi-subscription-usage:status";
@@ -33,8 +34,10 @@ export default function (pi: ExtensionAPI) {
   const statusReader = new ServiceStatusReader();
 
   pi.events.on(STATUS_EVENT, (data) => {
-    const { provider: piProviderId, reply } = (data ?? {}) as { provider?: unknown; reply?: unknown };
+    const { provider: piProviderId, reply, accept } = (data ?? {}) as { provider?: unknown; reply?: unknown; accept?: unknown };
     if (typeof reply !== "function") return;
+    // Tells the asker, during emit, that a reply is coming (it may take a moment to fetch).
+    if (typeof accept === "function") accept();
     const provider = typeof piProviderId === "string" ? providerForPiId(providerRegistry.getAllProviders(), piProviderId) : undefined;
     if (!provider?.statusPage) {
       reply(undefined);

@@ -83,10 +83,12 @@ test("other extensions can ask for a provider's status over pi.events", async (t
     registerCommand: () => {},
     events: { on: (name: string, handler: (data: unknown) => void) => handlers.set(name, handler), emit: () => {} },
   } as never);
+  let accepted = 0;
   const ask = (provider: string) =>
-    new Promise<unknown>((resolve) => handlers.get(STATUS_EVENT)!({ provider, reply: resolve }));
+    new Promise<unknown>((resolve) => handlers.get(STATUS_EVENT)!({ provider, reply: resolve, accept: () => accepted++ }));
 
   const claude = (await ask("anthropic-account-3")) as Parameters<typeof describeStatus>[0];
   assert.match(describeStatus(claude), /^status\.claude\.com: Partially Degraded Service\./);
   assert.equal(await ask("xai"), undefined, "no status page");
+  assert.equal(accepted, 2, "a reply is promised during emit");
 });

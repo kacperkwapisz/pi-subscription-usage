@@ -54,6 +54,7 @@ a request failed ([pi-subagents](https://github.com/kacperkwapisz/pi-subagents) 
 ```ts
 pi.events.emit("pi-subscription-usage:status", {
   provider: "anthropic-account-2", // any Pi provider id, numbered accounts included
+  accept: () => { /* called during emit: a reply is coming */ },
   reply: (result) => { /* { ok: true, status } or { ok: false, page, error }; undefined if none */ },
 });
 ```
