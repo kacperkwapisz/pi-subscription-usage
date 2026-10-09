@@ -31,6 +31,19 @@ closes. In settings you can choose whether bars show what's used or what's left,
 absolute reset times, and which providers may appear. Settings are saved in
 `~/.pi/agent/subscription-usage.json`.
 
+## Stats
+
+Run `/stats` for how many tokens you've used, how much of it came from the cache, and what it
+would have cost at API prices (USD), per provider with all its accounts added up and listed
+underneath, plus your top models and a chart. Switch between today, the last 7 days, the last
+30 days and all time with the arrow keys. It's made to screenshot and share: no emails, no
+project names.
+
+The numbers come from Pi's own session files (subagents included), so your whole history
+shows from the start; nothing new is recorded. Providers Pi has no prices for (such as Cursor)
+are left out. The first `/stats` reads every session, which can take a while; after that only
+new replies are read, from a cache in `~/.pi/agent/subscription-usage-stats.cache`.
+
 ## Several accounts
 
 Every login of a provider counts as an account: its own (`anthropic`) and numbered extras

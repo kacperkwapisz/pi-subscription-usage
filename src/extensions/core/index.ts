@@ -1,4 +1,6 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { existsSync, readFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
+import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { OverlayHandle } from "@earendil-works/pi-tui";
 import { accountNumber, discoverAccounts, type SubscriptionAccount } from "./accounts.ts";
 import { createSubscriptionAuthStorage, readStoredCredentials, scopeAuthStorage } from "./auth.ts";
@@ -11,7 +13,10 @@ import {
 } from "./providers/index.ts";
 import { ServiceStatusReader, type ServiceStatusResult } from "./service-status.ts";
 import { loadSubscriptionMeterSettings, saveSubscriptionMeterSettings } from "./settings.ts";
+import { loadRecords } from "./stats/records.ts";
+import type { ProviderNaming } from "./stats/summary.ts";
 import { ProviderSettingsDialog } from "./ui/provider-settings-dialog.ts";
+import { StatsView } from "./ui/stats-view.ts";
 import { SubscriptionsDialog } from "./ui/subscriptions-dialog.ts";
 
 /**
@@ -27,6 +32,82 @@ export function providerForPiId(providers: SubscriptionProviderDefinition[], piP
   return providers.find((provider) =>
     (provider.accountSources?.length ? provider.accountSources : [provider.id]).some((source) => accountNumber(piProviderId, source) !== undefined),
   );
+}
+
+/** Where Pi keeps sessions: --session-dir / PI_CODING_AGENT_SESSION_DIR, the sessionDir setting, or the default. */
+export function sessionsDir(agentDir = getAgentDir()): string {
+  const fromEnv = process.env.PI_CODING_AGENT_SESSION_DIR;
+  if (fromEnv) return fromEnv;
+  try {
+    const settingsFile = join(agentDir, "settings.json");
+    const setting = existsSync(settingsFile) ? (JSON.parse(readFileSync(settingsFile, "utf8")) as { sessionDir?: unknown }).sessionDir : undefined;
+    if (typeof setting === "string" && isAbsolute(setting)) return setting;
+  } catch {
+    // Unreadable settings: the default.
+  }
+  return join(agentDir, "sessions");
+}
+
+/**
+ * How /stats names things: a provider and all its numbered accounts form one group ("Anthropic"
+ * with Account 1, 2, 3; ChatGPT logins from openai-codex and openai together).
+ */
+export function statsNaming(providers: SubscriptionProviderDefinition[], displayName: (id: string) => string): ProviderNaming {
+  const base = (providerId: string) => providerId.replace(/-account-\d+$/, "");
+  const number = (providerId: string) => Number(providerId.match(/-account-(\d+)$/)?.[1] ?? 1);
+  return {
+    group: (providerId) => providerForPiId(providers, providerId)?.id ?? base(providerId),
+    groupLabel: (group) => providers.find((provider) => provider.id === group)?.label ?? displayName(group),
+    accountLabel: (providerId) => {
+      const provider = providerForPiId(providers, providerId);
+      const sources = provider?.accountSources?.length ? provider.accountSources : [provider?.id ?? base(providerId)];
+      const source = base(providerId);
+      if (source === sources[0]) return `Account ${number(providerId)}`;
+      return number(providerId) === 1 ? source : `${source} account ${number(providerId)}`;
+    },
+  };
+}
+
+function registerStats(pi: ExtensionAPI, providers: () => SubscriptionProviderDefinition[]): void {
+  pi.registerCommand("stats", {
+    description: "Tokens, cache share and API price across your providers and accounts",
+    handler: async (_args, ctx: ExtensionContext) => {
+      if (ctx.mode !== "tui") {
+        ctx.ui.notify("/stats needs the interactive terminal.", "warning");
+        return;
+      }
+      const agentDir = getAgentDir();
+      let view: StatsView | undefined;
+      await ctx.ui.custom<void>(
+        (tui, theme, _keybindings, done) => {
+          view = new StatsView({
+            load: (onProgress) =>
+              loadRecords({
+                sources: [
+                  { dir: sessionsDir(agentDir), subagent: false },
+                  { dir: join(agentDir, "subagents"), subagent: true },
+                ],
+                cacheFile: join(agentDir, "subscription-usage-stats.cache"),
+                onProgress,
+              }),
+            naming: statsNaming(providers(), (id) => ctx.modelRegistry.getProviderDisplayName(id) || id),
+            theme,
+            requestRender: () => tui.requestRender(),
+            onClose: () => done(undefined),
+          });
+          return {
+            render: (width: number) => view?.render(width) ?? [],
+            invalidate: () => view?.invalidate(),
+            handleInput: (data: string) => {
+              view?.handleInput(data);
+              tui.requestRender();
+            },
+          };
+        },
+        { overlay: true, overlayOptions: { anchor: "center", width: 82, maxHeight: "95%", margin: 1 } },
+      );
+    },
+  });
 }
 
 export default function (pi: ExtensionAPI) {
@@ -274,6 +355,7 @@ export default function (pi: ExtensionAPI) {
     },
   };
 
+  registerStats(pi, () => providerRegistry.getAllProviders());
   pi.registerCommand("subscriptions", command);
   pi.registerCommand("usage", command);
 }

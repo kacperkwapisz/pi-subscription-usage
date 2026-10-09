@@ -9,6 +9,6 @@ test("/usage is an alias of /subscriptions", () => {
     registerCommand: (name: string, options: { handler: unknown }) => commands.set(name, options),
     events: { on: () => () => {}, emit: () => {} },
   } as unknown as ExtensionAPI);
-  assert.deepEqual([...commands.keys()].sort(), ["subscriptions", "usage"]);
+  assert.deepEqual([...commands.keys()].sort(), ["stats", "subscriptions", "usage"]);
   assert.equal(commands.get("usage")?.handler, commands.get("subscriptions")?.handler);
 });
